@@ -1,0 +1,147 @@
+@import url('https://rsms.me/inter/inter.css');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 20% 98%;
+    --foreground: 210 24% 16%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 210 24% 16%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 210 24% 16%;
+
+    /* Deep Blue #1F497D */
+    --primary: 211 60% 31%;
+    --primary-foreground: 210 40% 98%;
+    --primary-glow: 211 70% 45%;
+
+    --secondary: 210 30% 96%;
+    --secondary-foreground: 210 24% 16%;
+
+    --muted: 210 25% 95%;
+    --muted-foreground: 215 15% 45%;
+
+    --accent: 211 80% 95%;
+    --accent-foreground: 211 60% 31%;
+
+    /* Red #E74C3C */
+    --destructive: 6 78% 57%;
+    --destructive-foreground: 0 0% 100%;
+    --danger: 6 78% 57%;
+    --danger-foreground: 0 0% 100%;
+
+    /* Green #27AE60 */
+    --success: 145 63% 42%;
+    --success-foreground: 0 0% 100%;
+
+    /* Orange #F39C12 */
+    --warning: 36 90% 51%;
+    --warning-foreground: 0 0% 100%;
+
+    --border: 214 25% 90%;
+    --input: 214 25% 90%;
+    --ring: 211 60% 31%;
+
+    --radius: 0.625rem;
+
+    --sidebar-background: 211 50% 14%;
+    --sidebar-foreground: 210 30% 85%;
+    --sidebar-primary: 211 70% 50%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 211 45% 20%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 211 40% 22%;
+    --sidebar-ring: 211 70% 50%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(211 60% 31%), hsl(211 70% 45%));
+    --gradient-glass: linear-gradient(135deg, hsl(0 0% 100% / 0.7), hsl(0 0% 100% / 0.4));
+    --shadow-elegant: 0 1px 2px hsl(210 24% 16% / 0.04), 0 4px 12px hsl(210 24% 16% / 0.05);
+    --shadow-lifted: 0 4px 20px hsl(211 60% 31% / 0.08), 0 1px 3px hsl(210 24% 16% / 0.06);
+    --shadow-glow: 0 0 0 4px hsl(211 70% 45% / 0.15);
+  }
+
+  .dark {
+    --background: 211 35% 8%;
+    --foreground: 210 30% 95%;
+    --card: 211 35% 11%;
+    --card-foreground: 210 30% 95%;
+    --popover: 211 35% 11%;
+    --popover-foreground: 210 30% 95%;
+    --primary: 211 70% 55%;
+    --primary-foreground: 211 35% 8%;
+    --primary-glow: 211 80% 65%;
+    --secondary: 211 30% 16%;
+    --secondary-foreground: 210 30% 95%;
+    --muted: 211 30% 14%;
+    --muted-foreground: 215 15% 65%;
+    --accent: 211 40% 18%;
+    --accent-foreground: 210 30% 95%;
+    --destructive: 6 78% 57%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 145 63% 48%;
+    --warning: 36 90% 55%;
+    --border: 211 30% 18%;
+    --input: 211 30% 18%;
+    --ring: 211 70% 55%;
+    --sidebar-background: 211 40% 6%;
+    --sidebar-foreground: 210 30% 80%;
+    --sidebar-primary: 211 70% 55%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 211 35% 12%;
+    --sidebar-accent-foreground: 210 30% 95%;
+    --sidebar-border: 211 35% 14%;
+    --sidebar-ring: 211 70% 55%;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+  html, body { font-family: 'Inter', system-ui, -apple-system, sans-serif; font-feature-settings: 'cv02','cv03','cv04','cv11'; }
+  body { @apply bg-background text-foreground antialiased; }
+}
+
+@layer utilities {
+  .glass {
+    background: var(--gradient-glass);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  .shadow-elegant { box-shadow: var(--shadow-elegant); }
+  .shadow-lifted { box-shadow: var(--shadow-lifted); }
+  .text-balance { text-wrap: balance; }
+  .grid-bg {
+    background-image:
+      linear-gradient(hsl(var(--border) / 0.6) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border) / 0.6) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+  .live-dot {
+    position: relative;
+  }
+  .live-dot::before {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 9999px;
+    background: currentColor;
+    opacity: 0.35;
+    animation: ping 1.6s cubic-bezier(0,0,0.2,1) infinite;
+  }
+  @keyframes ping {
+    75%, 100% { transform: scale(2); opacity: 0; }
+  }
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+  .animate-blink { animation: blink 1.4s ease-in-out infinite; }
+  @keyframes slide-up {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .animate-slide-up { animation: slide-up 0.35s ease-out both; }
+}
