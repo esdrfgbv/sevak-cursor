@@ -1,35 +1,35 @@
-import { Navigate, Route, Routes } from 'react-router-dom';
-import { Layout } from './components/Layout';
-import { Login } from './app/auth/Login';
-import { Register } from './app/auth/Register';
-import { getUser } from './lib/api';
-import { CoordinatorDashboard } from './app/coordinator/Dashboard';
-import { CoordinatorTasks } from './app/coordinator/Tasks';
-import { CoordinatorVolunteers } from './app/coordinator/Volunteers';
-import { CoordinatorAnalytics } from './app/coordinator/Analytics';
-import { VolunteerHome } from './app/volunteer/Home';
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { Toaster as Sonner } from "@/components/ui/sonner";
+import { Toaster } from "@/components/ui/toaster";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import Index from "./pages/Index.tsx";
+import Tasks from "./pages/Tasks.tsx";
+import Volunteers from "./pages/Volunteers.tsx";
+import MapView from "./pages/MapView.tsx";
+import Analytics from "./pages/Analytics.tsx";
+import NotFound from "./pages/NotFound.tsx";
 
-function App() {
-  const user = getUser();
-  const home = user?.role === 'volunteer' ? '/volunteer' : '/coordinator';
+const queryClient = new QueryClient();
 
-  return (
-    <Routes>
-      <Route element={<Layout />}>
-        <Route index element={<Navigate to={user ? home : '/login'} replace />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
+const App = () => (
+  <QueryClientProvider client={queryClient}>
+    <TooltipProvider>
+      <Toaster />
+      <Sonner />
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<Index />} />
+          <Route path="/tasks" element={<Tasks />} />
+          <Route path="/volunteers" element={<Volunteers />} />
+          <Route path="/map" element={<MapView />} />
+          <Route path="/analytics" element={<Analytics />} />
+          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </BrowserRouter>
+    </TooltipProvider>
+  </QueryClientProvider>
+);
 
-        <Route path="/coordinator" element={<CoordinatorDashboard />} />
-        <Route path="/coordinator/tasks" element={<CoordinatorTasks />} />
-        <Route path="/coordinator/volunteers" element={<CoordinatorVolunteers />} />
-        <Route path="/coordinator/analytics" element={<CoordinatorAnalytics />} />
-
-        <Route path="/volunteer" element={<VolunteerHome />} />
-      </Route>
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
-  );
-}
-
-export default App
+export default App;
