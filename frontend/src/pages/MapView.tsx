@@ -1,49 +1,55 @@
 import { AppShell } from "@/components/layout/AppShell";
-import { OpsMap } from "@/components/widgets/OpsMap";
+import { GoogleMapsComponent } from "@/components/widgets/GoogleMapsComponent";
 import { tasks } from "@/lib/mock-data";
 import { PriorityBadge } from "@/components/widgets/PriorityBadge";
-import { Layers, Maximize2, MapPin, Radio } from "lucide-react";
+import { MapPin } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Button } from "@/components/ui/button";
 
 const MapView = () => {
+  const navigate = useNavigate();
+
   return (
     <AppShell title="Live Operations Map" subtitle="Real-time task density and volunteer telemetry">
       <div className="p-6">
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-5">
           <div className="xl:col-span-3 bg-card border border-border rounded-xl shadow-elegant overflow-hidden">
             <div className="px-5 py-3 border-b border-border flex items-center justify-between">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
                 <div className="flex items-center gap-1.5 text-xs font-medium text-success">
-                  <Radio className="h-3.5 w-3.5 animate-pulse" /> LIVE TELEMETRY
+                  <span className="h-2 w-2 rounded-full bg-success animate-pulse" /> LIVE MAP
                 </div>
                 <span className="text-xs text-muted-foreground">·</span>
-                <span className="text-xs text-muted-foreground tabular-nums">Last update 2s ago</span>
+                <span className="text-xs text-muted-foreground tabular-nums">{tasks.length} tasks active</span>
               </div>
-              <div className="flex items-center gap-1">
-                <button className="h-8 px-2.5 text-xs rounded-md bg-primary text-primary-foreground font-medium flex items-center gap-1.5"><Layers className="h-3.5 w-3.5" /> Heatmap</button>
-                <button className="h-8 px-2.5 text-xs rounded-md hover:bg-muted text-muted-foreground">Clusters</button>
-                <button className="h-8 px-2.5 text-xs rounded-md hover:bg-muted text-muted-foreground">Routes</button>
-                <button className="h-8 w-8 flex items-center justify-center rounded-md hover:bg-muted text-muted-foreground"><Maximize2 className="h-3.5 w-3.5" /></button>
-              </div>
+              <Button
+                onClick={() => navigate("/request")}
+                size="sm"
+                variant="default"
+                className="text-xs h-8"
+              >
+                + New Task
+              </Button>
             </div>
             <div className="p-3">
-              <OpsMap height="h-[640px]" />
+              <GoogleMapsComponent height="h-[640px]" />
             </div>
           </div>
 
           <div className="space-y-4">
             <div className="bg-card border border-border rounded-xl p-4 shadow-elegant">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Zone Telemetry</h3>
-              <div className="mt-3 space-y-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Zone Activity</h3>
+              <div className="space-y-3">
                 {[
-                  { zone: "Sector 4 · Riverside", load: 92, color: "bg-danger" },
+                  { zone: "Sector 4", load: 92, color: "bg-danger" },
                   { zone: "Old Town", load: 78, color: "bg-warning" },
                   { zone: "Northbank", load: 54, color: "bg-primary" },
                   { zone: "Westside", load: 38, color: "bg-success" },
                 ].map(z => (
-                  <div key={z.zone}>
+                  <div key={z.zone} className="cursor-pointer hover:opacity-75 transition">
                     <div className="flex justify-between text-xs mb-1">
                       <span className="font-medium">{z.zone}</span>
-                      <span className="tabular-nums text-muted-foreground">{z.load}% load</span>
+                      <span className="tabular-nums text-muted-foreground text-[11px]">{z.load}%</span>
                     </div>
                     <div className="h-1.5 bg-muted rounded-full overflow-hidden">
                       <div className={`h-full ${z.color}`} style={{ width: `${z.load}%` }} />
@@ -55,11 +61,15 @@ const MapView = () => {
 
             <div className="bg-card border border-border rounded-xl shadow-elegant">
               <div className="px-4 py-3 border-b border-border">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Active Pins</h3>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Active Tasks</h3>
               </div>
               <div className="divide-y divide-border max-h-[420px] overflow-auto">
                 {tasks.map(t => (
-                  <div key={t.id} className="px-4 py-2.5 hover:bg-muted/40 cursor-pointer">
+                  <div 
+                    key={t.id} 
+                    className="px-4 py-2.5 hover:bg-muted/40 cursor-pointer transition"
+                    onClick={() => navigate(`/tasks?id=${t.id}`)}
+                  >
                     <div className="flex items-center gap-2">
                       <PriorityBadge priority={t.priority} />
                       <span className="text-[11px] font-mono text-muted-foreground">{t.id}</span>
@@ -80,3 +90,4 @@ const MapView = () => {
 };
 
 export default MapView;
+
