@@ -1,35 +1,26 @@
-"""Analytics router with /api/analytics/ prefix."""
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session, selectinload
+from fastapi import APIRouter
 
-from .. import models, schemas
-from ..database import get_db
+from .. import schemas
+from ..firebase_service import get_all_assignments, get_requests, get_users
+from ..models import request_from_dict, user_from_dict, assignment_from_dict
 from ..services.gemini_service import generate_dashboard_insight
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 
-def _insight_snapshot(db: Session) -> dict:
-    total_volunteers = db.scalar(
-        select(func.count(models.User.id)).where(models.User.role == "volunteer")
-    ) or 0
-    available_volunteers = db.scalar(
-        select(func.count(models.User.id)).where(
-            models.User.role == "volunteer", models.User.availability == True
-        )
-    ) or 0
-    active_tasks = db.scalar(
-        select(func.count(models.Request.id)).where(models.Request.status != "completed")
-    ) or 0
-    critical_tasks = db.scalar(
-        select(func.count(models.Request.id)).where(
-            models.Request.priority_level.in_(["HIGH", "CRITICAL"])
-        )
-    ) or 0
+def _insight_snapshot() -> dict:
+    volunteers = [user_from_dict(v) for v in get_users(role="volunteer")]
+    requests = [request_from_dict(r) for r in get_requests()]
+
+    total_volunteers = len(volunteers)
+    available_volunteers = sum(1 for v in volunteers if v.availability)
+    
+    active_tasks = sum(1 for r in requests if r.status != "completed")
+    critical_tasks = sum(1 for r in requests if r.priority_level in ["HIGH", "CRITICAL"])
+    
     return {
         "active_tasks": active_tasks,
         "critical_tasks": critical_tasks,
@@ -39,54 +30,35 @@ def _insight_snapshot(db: Session) -> dict:
 
 
 @router.get("/dashboard/insight", response_model=schemas.DashboardInsightResponse)
-def dashboard_insight(db: Session = Depends(get_db)):
-    return {"insight": generate_dashboard_insight(_insight_snapshot(db))}
+def dashboard_insight():
+    return {"insight": generate_dashboard_insight(_insight_snapshot())}
 
 
 @router.get("/dashboard", response_model=schemas.DashboardAnalytics)
-def dashboard_analytics(db: Session = Depends(get_db)):
-    total_tasks = db.scalar(select(func.count(models.Request.id))) or 0
-    active_tasks = db.scalar(
-        select(func.count(models.Request.id)).where(models.Request.status != "completed")
-    ) or 0
-    completed_tasks = db.scalar(
-        select(func.count(models.Request.id)).where(models.Request.status == "completed")
-    ) or 0
-    total_volunteers = db.scalar(
-        select(func.count(models.User.id)).where(models.User.role == "volunteer")
-    ) or 0
-    available_volunteers = db.scalar(
-        select(func.count(models.User.id)).where(
-            models.User.role == "volunteer", models.User.availability == True
-        )
-    ) or 0
-    disaster_tasks = db.scalar(
-        select(func.count(models.Request.id)).where(models.Request.mode == "DISASTER")
-    ) or 0
-    ngo_tasks = db.scalar(
-        select(func.count(models.Request.id)).where(models.Request.mode == "NGO")
-    ) or 0
-    critical_tasks = db.scalar(
-        select(func.count(models.Request.id)).where(
-            models.Request.priority_level.in_(["HIGH", "CRITICAL"])
-        )
-    ) or 0
+def dashboard_analytics():
+    volunteers = [user_from_dict(v) for v in get_users(role="volunteer")]
+    requests = [request_from_dict(r) for r in get_requests()]
+    
+    total_tasks = len(requests)
+    active_tasks = sum(1 for r in requests if r.status != "completed")
+    completed_tasks = sum(1 for r in requests if r.status == "completed")
+    
+    total_volunteers = len(volunteers)
+    available_volunteers = sum(1 for v in volunteers if v.availability)
+    
+    disaster_tasks = sum(1 for r in requests if (r.mode or "DISASTER").upper() == "DISASTER")
+    ngo_tasks = sum(1 for r in requests if (r.mode or "").upper() == "NGO")
+    critical_tasks = sum(1 for r in requests if r.priority_level in ["HIGH", "CRITICAL"])
 
     # Tasks by status
     tasks_by_status = {}
     for status in ["pending", "assigned", "completed"]:
-        count = db.scalar(
-            select(func.count(models.Request.id)).where(models.Request.status == status)
-        ) or 0
-        tasks_by_status[status] = count
+        tasks_by_status[status] = sum(1 for r in requests if r.status == status)
 
     # Tasks by priority
     tasks_by_priority = {}
     for level in ["LOW", "MEDIUM", "HIGH", "CRITICAL"]:
-        count = db.scalar(
-            select(func.count(models.Request.id)).where(models.Request.priority_level == level)
-        ) or 0
-        tasks_by_priority[level] = count
+        tasks_by_priority[level] = sum(1 for r in requests if r.priority_level == level)
 
     # Tasks by mode
     tasks_by_mode = {"DISASTER": disaster_tasks, "NGO": ngo_tasks}
@@ -98,21 +70,24 @@ def dashboard_analytics(db: Session = Depends(get_db)):
     avg_response_time = 12.5
 
     # Recent activity
-    recent_assignments = db.scalars(
-        select(models.Assignment)
-        .options(
-            selectinload(models.Assignment.volunteer),
-            selectinload(models.Assignment.request),
-        )
-        .order_by(models.Assignment.created_at.desc())
-        .limit(10)
-    ).all()
+    all_assignments = [assignment_from_dict(a) for a in get_all_assignments(include_volunteer=True)]
+    from datetime import timezone
+    all_assignments.sort(key=lambda a: a.created_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    recent_assignments = all_assignments[:10]
 
     recent_activity = []
     for a in recent_assignments:
+        volunteer_name = a.volunteer.name if a.volunteer else 'Unknown'
+        
+        request_title = 'Unknown'
+        # To get the request title, we'd need the request object.
+        req_match = next((r for r in requests if r.id == a.request_id), None)
+        if req_match:
+            request_title = req_match.title
+
         recent_activity.append({
             "type": "assignment",
-            "message": f"{a.volunteer.name if a.volunteer else 'Unknown'} assigned to {a.request.title if a.request else 'Unknown'}",
+            "message": f"{volunteer_name} assigned to {request_title}",
             "status": a.status,
             "score": a.score,
             "time": a.created_at.isoformat() if a.created_at else "",
@@ -148,13 +123,12 @@ def dashboard_analytics(db: Session = Depends(get_db)):
 
 
 @router.get("/heatmap", response_model=list[schemas.HeatmapPoint])
-def heatmap(db: Session = Depends(get_db)):
-    tasks = db.scalars(
-        select(models.Request).where(models.Request.status != "completed")
-    ).all()
+def heatmap():
+    requests = [request_from_dict(r) for r in get_requests()]
+    active_requests = [r for r in requests if r.status != "completed"]
 
     points = []
-    for task in tasks:
+    for task in active_requests:
         intensity = task.priority_score / 100.0
         points.append(schemas.HeatmapPoint(
             lat=task.lat,
@@ -166,19 +140,17 @@ def heatmap(db: Session = Depends(get_db)):
 
 
 @router.get("/volunteer-performance", response_model=list[schemas.VolunteerPerformance])
-def volunteer_performance(db: Session = Depends(get_db)):
-    volunteers = db.scalars(
-        select(models.User)
-        .options(selectinload(models.User.skills), selectinload(models.User.volunteer_assignments))
-        .where(models.User.role == "volunteer")
-        .order_by(models.User.rating.desc())
-        .limit(50)
-    ).all()
+def volunteer_performance():
+    volunteers = [user_from_dict(v) for v in get_users(role="volunteer")]
+    volunteers.sort(key=lambda v: v.rating, reverse=True)
+    
+    # We need to map assignments to volunteers to count completed ones
+    all_assignments = [assignment_from_dict(a) for a in get_all_assignments(include_volunteer=False)]
 
     results = []
-    for vol in volunteers:
-        completed = sum(1 for a in vol.volunteer_assignments if a.status == "completed")
-        total = len(vol.volunteer_assignments) if vol.volunteer_assignments else 0
+    for vol in volunteers[:50]:
+        vol_assignments = [a for a in all_assignments if str(a.volunteer_id) == str(vol.id)]
+        completed = sum(1 for a in vol_assignments if a.status == "completed")
         avail_rate = 1.0 if vol.availability else 0.5
 
         results.append(schemas.VolunteerPerformance(
@@ -194,32 +166,23 @@ def volunteer_performance(db: Session = Depends(get_db)):
 
 
 @router.get("/skill-demand", response_model=list[schemas.SkillDemandItem])
-def skill_demand(db: Session = Depends(get_db)):
-    # Demand: count how many active tasks require each skill
-    active_tasks = db.scalars(
-        select(models.Request)
-        .options(selectinload(models.Request.skills))
-        .where(models.Request.status != "completed")
-    ).all()
+def skill_demand():
+    requests = [request_from_dict(r) for r in get_requests()]
+    active_requests = [r for r in requests if r.status != "completed"]
 
     demand_counter: Counter = Counter()
-    for task in active_tasks:
+    for task in active_requests:
         for skill in task.skills:
             demand_counter[skill.name] += 1
 
-    # Supply: count how many available volunteers have each skill
-    available_vols = db.scalars(
-        select(models.User)
-        .options(selectinload(models.User.skills))
-        .where(models.User.role == "volunteer", models.User.availability == True)
-    ).all()
+    volunteers = [user_from_dict(v) for v in get_users(role="volunteer")]
+    available_vols = [v for v in volunteers if v.availability]
 
     supply_counter: Counter = Counter()
     for vol in available_vols:
         for skill in vol.skills:
             supply_counter[skill.name] += 1
 
-    # Combine all skill names
     all_skills = set(demand_counter.keys()) | set(supply_counter.keys())
     results = []
     for skill_name in sorted(all_skills):

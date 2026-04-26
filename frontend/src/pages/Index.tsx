@@ -59,18 +59,18 @@ const Index = () => {
     setCreatingTask(true);
     try {
       await tasksApi.create({
-        incident_type: "Medical Emergency",
-        title: "Urgent medical support needed",
-        description: "Medical emergency with injured people, urgent first aid and logistics support needed for 12 people.",
-        required_skills: ["Medical", "First Aid", "Logistics"],
-        people_count: 12,
-        lat: 17.3850 + (Math.random() - 0.5) * 0.06,
-        lng: 78.4867 + (Math.random() - 0.5) * 0.06,
-        mode: "DISASTER",
+        incident_type: "Supply Distribution",
+        title: "Rapid relief distribution point",
+        description: "Set up a distribution point for water + food packs for ~40 people. Coordinate logistics and crowd control.",
+        required_skills: ["Logistics", "Food Distribution", "Crowd Control"],
+        people_count: 40,
+        lat: 17.3850 + (Math.random() - 0.5) * 0.04,
+        lng: 78.4867 + (Math.random() - 0.5) * 0.04,
+        mode: "NGO",
         image_data: null,
       });
       await fetchData();
-      toast.success("New task created and AI dispatch evaluated");
+      toast.success("New NGO task created");
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Task creation failed");
     } finally {

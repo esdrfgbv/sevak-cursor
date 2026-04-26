@@ -1,9 +1,19 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from fastapi import APIRouter, HTTPException
 
 from .. import models, schemas
-from ..database import get_db
+from ..firebase_service import (
+    create_assignment,
+    create_request,
+    ensure_skills,
+    get_request_by_id,
+    get_requests,
+    get_support_votes,
+    add_support_vote,
+    update_assignment,
+    update_request,
+    get_user_by_id,
+)
+from ..models import request_from_dict, user_from_dict, assignment_from_dict
 from ..services.assignment_engine import run_assignment, score_volunteer_for_request
 from ..services.cluster_service import cluster_metrics_for_request, haversine_km
 from ..services.incident_matching import duplicate_signal_points, find_duplicate_request
@@ -15,17 +25,10 @@ router = APIRouter()
 
 
 @router.post("/requests", response_model=schemas.RequestCreateResponse)
-def create_request(payload: schemas.RequestCreate, db: Session = Depends(get_db)):
-    skill_models = []
-    for skill_name in payload.required_skills:
-        skill = db.scalar(select(models.Skill).where(models.Skill.name == skill_name))
-        if not skill:
-            skill = models.Skill(name=skill_name)
-            db.add(skill)
-            db.flush()
-        skill_models.append(skill)
+def create_request_endpoint(payload: schemas.RequestCreate):
+    ensure_skills(payload.required_skills)
 
-    cluster_boost, _cluster_size = cluster_metrics_for_request(db, payload.lat, payload.lng)
+    cluster_boost, _cluster_size = cluster_metrics_for_request(payload.lat, payload.lng)
     priority_score, priority_level = calculate_priority(
         payload.description,
         payload.people_count,
@@ -40,7 +43,7 @@ def create_request(payload: schemas.RequestCreate, db: Session = Depends(get_db)
     )
     verification = schemas.ImageVerificationSummary(**verification_payload)
 
-    duplicate_request, _ = find_duplicate_request(db, payload)
+    duplicate_request, _ = find_duplicate_request(payload)
     duplicate_points_added = 0
 
     if duplicate_request:
@@ -54,56 +57,48 @@ def create_request(payload: schemas.RequestCreate, db: Session = Depends(get_db)
         )
         duplicate_request.priority_score = duplicate_priority_score
         duplicate_request.priority_level = duplicate_priority_level
-        db.add(duplicate_request)
-        run_assignment(db, duplicate_request.id, {assignment.volunteer_id for assignment in duplicate_request.assignments})
-        update_request_status(db, duplicate_request)
+        
+        update_request(duplicate_request.id, {
+            "severity_support_points": duplicate_request.severity_support_points,
+            "priority_score": duplicate_request.priority_score,
+            "priority_level": duplicate_request.priority_level
+        })
+        
+        run_assignment(duplicate_request.id, {assignment.volunteer_id for assignment in duplicate_request.assignments})
+        update_request_status(duplicate_request.id)
+        
         priority_score = duplicate_priority_score
         priority_level = duplicate_priority_level
 
-    request_obj = models.Request(
-        requester_id=payload.requester_id,
-        incident_type=payload.incident_type,
-        title=payload.title,
-        description=payload.description,
-        lat=payload.lat,
-        lng=payload.lng,
-        people_count=payload.people_count,
-        priority_score=priority_score,
-        priority_level=priority_level,
-        cluster_boost=cluster_boost,
-        severity_support_points=duplicate_points_added,
-        image_url=image_url,
-        image_verification_status=image_status,
-        image_verification_reason=image_reason,
-    )
-    request_obj.skills = skill_models
-    db.add(request_obj)
-    db.flush()
-
-    run_assignment(db, request_obj.id)
-    update_request_status(db, request_obj)
-    db.commit()
-
-    request_detail = db.scalar(
-        select(models.Request)
-        .options(
-            selectinload(models.Request.skills),
-            selectinload(models.Request.assignments).selectinload(models.Assignment.volunteer).selectinload(models.User.skills),
-            selectinload(models.Request.support_votes),
-        )
-        .where(models.Request.id == request_obj.id)
-    )
+    req_data = {
+        "requester_id": payload.requester_id,
+        "incident_type": payload.incident_type,
+        "title": payload.title,
+        "description": payload.description,
+        "lat": payload.lat,
+        "lng": payload.lng,
+        "people_count": payload.people_count,
+        "priority_score": priority_score,
+        "priority_level": priority_level,
+        "cluster_boost": cluster_boost,
+        "severity_support_points": duplicate_points_added,
+        "image_url": image_url,
+        "image_verification_status": image_status,
+        "image_verification_reason": image_reason,
+        "required_skills": payload.required_skills,
+    }
+    created = create_request(req_data)
+    request_id = created["id"]
+    
+    run_assignment(request_id)
+    update_request_status(request_id)
+    
+    request_detail = request_from_dict(get_request_by_id(request_id))
+    
     duplicate_detail = None
     if duplicate_request:
-        duplicate_detail = db.scalar(
-            select(models.Request)
-            .options(
-                selectinload(models.Request.skills),
-                selectinload(models.Request.assignments).selectinload(models.Assignment.volunteer).selectinload(models.User.skills),
-                selectinload(models.Request.support_votes),
-            )
-            .where(models.Request.id == duplicate_request.id)
-        )
+        duplicate_detail = request_from_dict(get_request_by_id(duplicate_request.id))
+        
     suggested = list(request_detail.assignments) if request_detail else []
     return {
         "request": request_detail,
@@ -117,57 +112,33 @@ def create_request(payload: schemas.RequestCreate, db: Session = Depends(get_db)
 
 
 @router.get("/requests", response_model=list[schemas.RequestDetail])
-def list_requests(db: Session = Depends(get_db)):
-    requests = db.scalars(
-        select(models.Request)
-        .options(
-            selectinload(models.Request.skills),
-            selectinload(models.Request.assignments).selectinload(models.Assignment.volunteer).selectinload(models.User.skills),
-            selectinload(models.Request.support_votes),
-        )
-        .order_by(models.Request.created_at.desc())
-    ).all()
+def list_requests():
+    requests = [request_from_dict(d) for d in get_requests(include_assignments=True, include_support_votes=True)]
     return requests
 
 
 @router.get("/requests/{request_id}", response_model=schemas.RequestDetail)
-def get_request(request_id: int, db: Session = Depends(get_db)):
-    request_obj = db.scalar(
-        select(models.Request)
-        .options(
-            selectinload(models.Request.skills),
-            selectinload(models.Request.assignments).selectinload(models.Assignment.volunteer).selectinload(models.User.skills),
-            selectinload(models.Request.support_votes),
-        )
-        .where(models.Request.id == request_id)
-    )
-    if not request_obj:
+def get_request(request_id: int):
+    req_dict = get_request_by_id(request_id)
+    if not req_dict:
         raise HTTPException(status_code=404, detail="Request not found")
-    return request_obj
+    return request_from_dict(req_dict)
 
 
 @router.post("/requests/{request_id}/claim", response_model=schemas.AssignmentRead)
-def claim_request(request_id: int, payload: schemas.RequestClaimCreate, db: Session = Depends(get_db)):
-    request_obj = db.scalar(
-        select(models.Request)
-        .options(
-            selectinload(models.Request.skills),
-            selectinload(models.Request.assignments).selectinload(models.Assignment.volunteer),
-        )
-        .where(models.Request.id == request_id)
-    )
-    if not request_obj:
+def claim_request(request_id: int, payload: schemas.RequestClaimCreate):
+    req_dict = get_request_by_id(request_id)
+    if not req_dict:
         raise HTTPException(status_code=404, detail="Request not found")
+    request_obj = request_from_dict(req_dict)
+    
     if request_obj.status == "completed":
         raise HTTPException(status_code=400, detail="Completed requests cannot be claimed")
 
-    volunteer = db.scalar(
-        select(models.User)
-        .options(selectinload(models.User.skills))
-        .where(models.User.id == payload.volunteer_id, models.User.role == "volunteer")
-    )
-    if not volunteer:
+    vol_dict = get_user_by_id(payload.volunteer_id)
+    if not vol_dict or vol_dict.get("role") != "volunteer":
         raise HTTPException(status_code=404, detail="Volunteer not found")
+    volunteer = user_from_dict(vol_dict)
 
     distance_km = haversine_km(request_obj.lat, request_obj.lng, volunteer.lat, volunteer.lng)
     if distance_km > 10:
@@ -175,136 +146,94 @@ def claim_request(request_id: int, payload: schemas.RequestClaimCreate, db: Sess
 
     existing = next((item for item in request_obj.assignments if item.volunteer_id == volunteer.id), None)
     if existing:
-        existing.status = "accepted"
+        update_assignment(existing.id, {"status": "accepted"})
         update_volunteer_status(volunteer, "assigned", availability=False)
-        db.add(existing)
-        db.add(volunteer)
-        update_request_status(db, request_obj)
-        db.commit()
-        db.refresh(existing)
-        return existing
+        update_request_status(request_obj.id)
+        
+        # Refresh and return
+        updated_req = request_from_dict(get_request_by_id(request_id))
+        return next((item for item in updated_req.assignments if item.id == existing.id), None)
 
     score, reason = score_volunteer_for_request(request_obj, volunteer)
-    assignment = models.Assignment(
-        request_id=request_obj.id,
-        volunteer_id=volunteer.id,
-        score=score,
-        reason=f"{reason}; self-claimed nearby request",
-        status="accepted",
-    )
+    assignment_data = {
+        "request_id": request_obj.id,
+        "volunteer_id": volunteer.id,
+        "score": score,
+        "reason": f"{reason}; self-claimed nearby request",
+        "status": "accepted",
+    }
+    assignment_dict = create_assignment(assignment_data)
     update_volunteer_status(volunteer, "assigned", availability=False)
-    db.add(assignment)
-    db.add(volunteer)
-    update_request_status(db, request_obj)
-    db.commit()
+    update_request_status(request_obj.id)
 
-    assignment = db.scalar(
-        select(models.Assignment)
-        .options(selectinload(models.Assignment.volunteer).selectinload(models.User.skills))
-        .where(models.Assignment.id == assignment.id)
-    )
-    return assignment
+    return assignment_from_dict(assignment_dict)
 
 
 @router.post("/requests/{request_id}/support", response_model=schemas.RequestDetail)
-def support_request(request_id: int, payload: schemas.RequestSupportCreate, db: Session = Depends(get_db)):
-    request_obj = db.scalar(
-        select(models.Request)
-        .options(
-            selectinload(models.Request.skills),
-            selectinload(models.Request.assignments).selectinload(models.Assignment.volunteer).selectinload(models.User.skills),
-            selectinload(models.Request.support_votes),
-        )
-        .where(models.Request.id == request_id)
-    )
-    if not request_obj:
+def support_request(request_id: int, payload: schemas.RequestSupportCreate):
+    req_dict = get_request_by_id(request_id)
+    if not req_dict:
         raise HTTPException(status_code=404, detail="Request not found")
+    request_obj = request_from_dict(req_dict)
+    
     if request_obj.status == "completed":
         raise HTTPException(status_code=400, detail="Completed requests cannot be supported")
     if request_obj.requester_id == payload.requester_id:
         raise HTTPException(status_code=400, detail="You cannot support your own request")
 
-    requester = db.scalar(select(models.User).where(models.User.id == payload.requester_id, models.User.role == "requester"))
-    if not requester:
+    req_user_dict = get_user_by_id(payload.requester_id)
+    if not req_user_dict or req_user_dict.get("role") != "requester":
         raise HTTPException(status_code=404, detail="Requester not found")
+    requester = user_from_dict(req_user_dict)
 
     distance_km = haversine_km(request_obj.lat, request_obj.lng, requester.lat, requester.lng)
     if distance_km > 10:
         raise HTTPException(status_code=400, detail="Requester is too far from this request")
 
-    existing_vote = db.scalar(
-        select(models.SupportVote).where(
-            models.SupportVote.request_id == request_id,
-            models.SupportVote.requester_id == payload.requester_id,
-        )
-    )
-    if existing_vote:
+    if not add_support_vote(request_id, payload.requester_id, max(payload.points, 1)):
         raise HTTPException(status_code=400, detail="Severity already supported from this account")
 
-    vote = models.SupportVote(request_id=request_id, requester_id=payload.requester_id, points=max(payload.points, 1))
-    db.add(vote)
-    request_obj.severity_support_points += vote.points
+    # Refresh points
+    support_votes = get_support_votes(request_id)
+    total_points = sum(v.get("points", 0) for v in support_votes)
+    
+    request_obj.severity_support_points = total_points
     priority_score, priority_level = calculate_priority(
         request_obj.description,
         request_obj.people_count,
         [skill.name for skill in request_obj.skills],
         request_obj.cluster_boost + request_obj.severity_support_points,
     )
-    request_obj.priority_score = priority_score
-    request_obj.priority_level = priority_level
-    db.add(request_obj)
-    run_assignment(db, request_id, {assignment.volunteer_id for assignment in request_obj.assignments})
-    update_request_status(db, request_obj)
-    db.commit()
+    
+    update_request(request_id, {
+        "severity_support_points": total_points,
+        "priority_score": priority_score,
+        "priority_level": priority_level
+    })
+    
+    run_assignment(request_id, {assignment.volunteer_id for assignment in request_obj.assignments})
+    update_request_status(request_id)
 
-    refreshed = db.scalar(
-        select(models.Request)
-        .options(
-            selectinload(models.Request.skills),
-            selectinload(models.Request.assignments).selectinload(models.Assignment.volunteer).selectinload(models.User.skills),
-            selectinload(models.Request.support_votes),
-        )
-        .where(models.Request.id == request_id)
-    )
-    return refreshed
+    return request_from_dict(get_request_by_id(request_id))
 
 
 @router.put("/requests/{request_id}/resolve", response_model=schemas.RequestDetail)
-def resolve_request(request_id: int, payload: schemas.RequestResolvePayload, db: Session = Depends(get_db)):
-    request_obj = db.scalar(
-        select(models.Request)
-        .options(
-            selectinload(models.Request.skills),
-            selectinload(models.Request.assignments).selectinload(models.Assignment.volunteer).selectinload(models.User.skills),
-            selectinload(models.Request.support_votes),
-        )
-        .where(models.Request.id == request_id)
-    )
-    if not request_obj:
+def resolve_request(request_id: int, payload: schemas.RequestResolvePayload):
+    req_dict = get_request_by_id(request_id)
+    if not req_dict:
         raise HTTPException(status_code=404, detail="Request not found")
+    request_obj = request_from_dict(req_dict)
+    
     if request_obj.requester_id != payload.requester_id:
         raise HTTPException(status_code=403, detail="Only the original requester can resolve this incident")
 
     for assignment in request_obj.assignments:
         if assignment.status != "completed":
-            assignment.status = "completed"
-            db.add(assignment)
+            update_assignment(assignment.id, {"status": "completed"})
         if assignment.volunteer:
             update_volunteer_status(assignment.volunteer, "completed")
             update_volunteer_status(assignment.volunteer, "available", availability=True)
-            db.add(assignment.volunteer)
 
-    request_obj.status = "completed"
-    db.add(request_obj)
-    db.commit()
+    update_request(request_id, {"status": "completed"})
 
-    refreshed = db.scalar(
-        select(models.Request)
-        .options(
-            selectinload(models.Request.skills),
-            selectinload(models.Request.assignments).selectinload(models.Assignment.volunteer).selectinload(models.User.skills),
-            selectinload(models.Request.support_votes),
-        )
-        .where(models.Request.id == request_id)
-    )
-    return refreshed
+    return request_from_dict(get_request_by_id(request_id))

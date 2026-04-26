@@ -29,18 +29,18 @@ const MapView = () => {
     setCreating(true);
     try {
       await tasksApi.create({
-        incident_type: "Flood Rescue",
-        title: "Flood cluster near primary zone",
-        description: "Flood water rising near homes, urgent evacuation and medical support needed for 20 people.",
-        required_skills: ["Swift Water Rescue", "Medical", "Logistics"],
-        people_count: 20,
-        lat: 17.3850 + (Math.random() - 0.5) * 0.08,
-        lng: 78.4867 + (Math.random() - 0.5) * 0.08,
-        mode: "DISASTER",
+        incident_type: "Shelter Management",
+        title: "Shelter setup coordination near primary zone",
+        description: "Coordinate shelter setup and logistics for ~60 people. Volunteers will accept/decline assignments.",
+        required_skills: ["Shelter Management", "Logistics", "Communications"],
+        people_count: 60,
+        lat: 17.3850 + (Math.random() - 0.5) * 0.04,
+        lng: 78.4867 + (Math.random() - 0.5) * 0.04,
+        mode: "NGO",
         image_data: null,
       });
       await fetchTasks();
-      toast.success("New DISASTER task created and matching engine triggered");
+      toast.success("New NGO task created");
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Task creation failed");
     } finally {

@@ -6,14 +6,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Union
 
 from ..services.priority_engine import explain_priority
 
 
 @dataclass
 class Skill:
-    id: int
+    id: Union[int, str]
     name: str
 
     def __hash__(self):
@@ -22,7 +22,7 @@ class Skill:
 
 @dataclass
 class User:
-    id: int
+    id: Union[int, str]
     name: str
     role: str
     lat: float = 0.0
@@ -41,9 +41,9 @@ class User:
 
 @dataclass
 class Assignment:
-    id: int
-    request_id: int
-    volunteer_id: int
+    id: Union[int, str]
+    request_id: Union[int, str]
+    volunteer_id: Union[int, str]
     score: float
     status: str = "accepted"
     reason: str = ""
@@ -65,22 +65,22 @@ class Assignment:
 
 @dataclass
 class SupportVote:
-    id: int
-    request_id: int
-    requester_id: int
+    id: Union[int, str]
+    request_id: Union[int, str]
+    requester_id: Union[int, str]
     points: int = 10
     created_at: datetime = field(default_factory=datetime.utcnow)
 
 
 @dataclass
 class Request:
-    id: int
+    id: Union[int, str]
     incident_type: str
     title: str
     description: str
     lat: float
     lng: float
-    requester_id: Optional[int] = None
+    requester_id: Optional[Union[int, str]] = None
     mode: str = "DISASTER"
     people_count: int = 0
     status: str = "pending"
@@ -114,8 +114,8 @@ class Request:
 
 @dataclass
 class Rating:
-    id: int
-    assignment_id: int
+    id: Union[int, str]
+    assignment_id: Union[int, str]
     rating: int
     comment: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.utcnow)

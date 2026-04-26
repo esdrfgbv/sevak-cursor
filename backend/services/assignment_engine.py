@@ -1,24 +1,26 @@
 from .. import config
 from ..models import Assignment, Request, User, user_from_firestore
 from .cluster_service import haversine_km
-from .firebase_service import get_all_users, get_request, update_request
-from .gemini_service import ai_select_volunteers
+from ..firebase_service import get_users, get_request_by_id, update_request
 from .state_manager import update_request_status, update_volunteer_status
 
 
 MAX_AI_CANDIDATES = 25
-MAX_DISTANCE_KM = 50  # Hard limit: volunteers beyond this distance are excluded
+MAX_DISTANCE_KM = float(getattr(config, "MAX_ASSIGNMENT_DISTANCE_KM", 50))  # absolute hard limit
+PRIMARY_DISTANCE_KM = float(getattr(config, "DEMO_RADIUS_KM", 20))  # demo: prefer/require nearby
 
 
 def calculate_required_volunteers(task: Request) -> int:
     people_count = max(int(task.people_count or 0), 0)
     mode = (task.mode or "DISASTER").upper()
     if mode == "DISASTER":
-        base = max(5, people_count // 10)
-        if (task.priority_level or "").upper() == "CRITICAL" and people_count >= 100:
-            base += 5
-        return min(base, 25)
-    return max(1, people_count // 15)
+        base = 3
+        additional = people_count / 20.0
+        required = int(round(base + additional))
+        return max(3, min(required, 15))
+    # NGO: small coordination group, manual acceptance
+    required = int(round(2 + (people_count / 50.0)))
+    return max(2, min(required, 5))
 
 
 def _distance_score(distance_km: float) -> float:
@@ -70,28 +72,14 @@ def _fit_label(score: float) -> str:
 
 
 def _human_reason(mode: str, skill: float, distance_km: float, avail: float, rating: float, final_score: float) -> str:
-    signals = []
-    if skill >= 1:
-        signals.append("required skills covered")
-    elif skill > 0:
-        signals.append("partial skill match")
-    else:
-        signals.append("nearby backup responder")
-
-    if distance_km < 2:
-        signals.append("under 2 km away")
-    elif distance_km < 5:
-        signals.append("nearby")
-    else:
-        signals.append(f"{distance_km:.1f} km away")
-
-    if avail >= 1:
-        signals.append("available now")
-    if rating >= 0.9:
-        signals.append("high reliability")
-
-    prefix = "Rapid response fit" if mode == "DISASTER" else "Program fit"
-    return f"{_fit_label(final_score)}: {prefix} due to {', '.join(signals)}."
+    # Structured, demo-friendly reasoning (no fake AI prose)
+    skill_label = "Skill match" if skill >= 1 else ("Partial skill match" if skill > 0 else "Backup skill fit")
+    availability_label = "Available" if avail >= 1 else ("Limited availability" if avail > 0 else "Not available")
+    reliability_label = "High rating" if rating >= 0.9 else "Normal rating"
+    return (
+        f"Selected due to: {skill_label} + {distance_km:.1f}km distance + {availability_label} + {reliability_label} "
+        f"(score {final_score:.2f})"
+    )
 
 
 def _score_volunteer(request_obj: Request, volunteer: User) -> tuple[float, str]:
@@ -171,7 +159,7 @@ def _candidate_payload(request_obj: Request, volunteer: User, score: float, reas
 def _available_volunteers(request_obj: Request | None = None, excluded_volunteer_ids: set[int] | None = None) -> list[User]:
     """Get available volunteers within MAX_DISTANCE_KM of request."""
     # Get all volunteers from Firebase
-    all_volunteers_data = get_all_users(role='volunteer')
+    all_volunteers_data = get_users(role='volunteer')
     
     # Convert to User models
     volunteers = [user_from_firestore(v) for v in all_volunteers_data]
@@ -209,57 +197,38 @@ def get_top_candidates(
 
     ranked.sort(key=lambda item: item["score"], reverse=True)
     
-    # Fail-safe: if no candidates within distance, return clear message
     if not ranked:
-        return [{
-            "volunteer": None,
-            "volunteer_id": None,
-            "skills": [],
-            "distance_km": 0,
-            "availability": 0,
-            "rating": 0,
-            "workload": 0,
-            "score": 0,
-            "justification": f"No nearby volunteers available within {MAX_DISTANCE_KM}km radius",
-        }]
+        return []
     
     return ranked[:limit]
 
+def _select_algorithmic(request_obj: Request, candidates: list[dict], required_count: int) -> dict:
+    """Algorithmic selection only (distance + skills + availability + rating)."""
+    bounded_count = min(required_count, len(candidates))
+    if bounded_count <= 0:
+        return {"selected": [], "insight": "No nearby volunteers available for this task."}
 
-def _fallback_ai_result(request_obj: Request, candidates: list[dict], required_count: int) -> dict:
+    picked = candidates[:bounded_count]
     selected = [
         {
             "volunteer_id": item["volunteer_id"],
             "score": round(float(item["score"]) * 100, 1),
             "reason": item["justification"],
         }
-        for item in candidates[:required_count]
+        for item in picked
     ]
     mode = (request_obj.mode or "DISASTER").upper()
+    required = required_count
     if mode == "DISASTER":
-        severity = (request_obj.priority_level or "").lower()
-        insight = (
-            f"Assigned {len(selected)} volunteers due to high population impact "
-            f"and {severity or 'emergency'} severity."
-        )
+        insight = f"Dispatched {len(selected)}/{required} nearby volunteers based on skill fit, distance, availability, and rating."
     else:
-        insight = f"Selected {len(selected)} volunteers using skill fit, rating, and availability."
+        insight = f"Suggested {len(selected)}/{required} nearby volunteers for manual acceptance (skill fit + reliability + proximity)."
     return {"selected": selected, "insight": insight}
-
-
-def _select_with_ai(request_obj: Request, candidates: list[dict], required_count: int) -> dict:
-    bounded_count = min(required_count, len(candidates))
-    if bounded_count <= 0:
-        return {"selected": [], "insight": "No available volunteers matched this task."}
-    ai_result = ai_select_volunteers(request_obj, candidates, bounded_count)
-    if ai_result:
-        return ai_result
-    return _fallback_ai_result(request_obj, candidates, bounded_count)
 
 
 def match_volunteers(request_id: str, top_n: int | None = None) -> list[dict]:
     """Return selected volunteers with AI/fallback reasons without assigning."""
-    request_data = get_request(request_id)
+    request_data = get_request_by_id(request_id)
     if not request_data:
         raise ValueError("Task not found")
     
@@ -280,7 +249,14 @@ def match_volunteers(request_id: str, top_n: int | None = None) -> list[dict]:
 
     required_count = top_n or calculate_required_volunteers(request_obj)
     candidates = get_top_candidates(request_obj)
-    ai_result = _select_with_ai(request_obj, candidates, required_count)
+
+    # Demo constraint: must be within PRIMARY_DISTANCE_KM, otherwise treat as none nearby
+    nearby = [c for c in candidates if c.get("distance_km", 999) <= PRIMARY_DISTANCE_KM]
+    if not nearby:
+        update_request(request_id, {"ai_insight": f"No nearby volunteers (within {PRIMARY_DISTANCE_KM:.0f}km) available."})
+        return []
+
+    ai_result = _select_algorithmic(request_obj, nearby, required_count)
     
     # Update request with AI insight
     update_request(request_id, {'ai_insight': ai_result['insight']})
@@ -303,7 +279,7 @@ def match_volunteers(request_id: str, top_n: int | None = None) -> list[dict]:
 def run_assignment(request_id: str, excluded_volunteer_ids: set[str] | None = None) -> list[dict]:
     """Run assignment for a request using Firebase."""
     excluded_volunteer_ids = excluded_volunteer_ids or set()
-    request_data = get_request(request_id)
+    request_data = get_request_by_id(request_id)
     if not request_data:
         raise ValueError("Request not found")
 
@@ -332,6 +308,7 @@ def run_assignment(request_id: str, excluded_volunteer_ids: set[str] | None = No
         request_obj,
         excluded_volunteer_ids=excluded_volunteer_ids,
     )
+    nearby = [c for c in candidates if c.get("distance_km", 999) <= PRIMARY_DISTANCE_KM]
     required_count = calculate_required_volunteers(request_obj)
     
     # For simplicity, we're not tracking existing assignments in this version
@@ -344,11 +321,15 @@ def run_assignment(request_id: str, excluded_volunteer_ids: set[str] | None = No
         f"remaining={remaining_count} candidates={len(candidates)}"
     )
     
-    if remaining_count == 0 or not candidates:
-        update_request(request_id, {'ai_insight': request_obj.ai_insight or f"Required volunteer count is already met."})
+    if remaining_count == 0:
+        update_request(request_id, {"ai_insight": request_obj.ai_insight or "Required volunteer count already met."})
         return []
 
-    ai_result = _select_with_ai(request_obj, candidates, remaining_count)
+    if not nearby:
+        update_request(request_id, {"ai_insight": f"No nearby volunteers (within {PRIMARY_DISTANCE_KM:.0f}km) available."})
+        return []
+
+    ai_result = _select_algorithmic(request_obj, nearby, remaining_count)
     
     # Update request with AI insight
     update_request(request_id, {'ai_insight': ai_result['insight']})
@@ -366,7 +347,7 @@ def run_assignment(request_id: str, excluded_volunteer_ids: set[str] | None = No
         score = round(float(selection.get("score", 0)) / 100, 3)
         reason = str(selection.get("reason") or candidate["justification"])
         
-        from .firebase_service import create_assignment, update_user
+        from ..firebase_service import create_assignment, update_user
         
         assignment_data = {
             'request_id': request_id,

@@ -17,6 +17,7 @@ from . import config
 # ── Constants ─────────────────────────────────────────────────────────────────
 BASE_LAT = 17.3850
 BASE_LNG = 78.4867
+DEMO_RADIUS_KM = float(getattr(config, "DEMO_RADIUS_KM", 20))
 
 SKILL_POOL = [
     "Medical", "Search and Rescue", "Swift Water Rescue", "Logistics",
@@ -101,6 +102,31 @@ def generate_nearby_location(max_km: float = 18.0) -> tuple[float, float]:
     return round(lat, 5), round(lng, 5)
 
 
+def _stable_demo_location(seed_key: str, max_km: float = DEMO_RADIUS_KM) -> tuple[float, float]:
+    """Deterministic point within max_km of the demo center."""
+    rng = random.Random(seed_key)
+    u = rng.random()
+    v = rng.random()
+    r_deg = (max_km / 111.0) * math.sqrt(u)
+    theta = 2 * math.pi * v
+    lat = float(config.BASE_LAT) + r_deg * math.sin(theta)
+    lng = float(config.BASE_LNG) + r_deg * math.cos(theta) / math.cos(math.radians(float(config.BASE_LAT)))
+    return round(lat, 5), round(lng, 5)
+
+
+def _apply_demo_location(entity_type: str, entity_id: Any, lat: Any, lng: Any) -> tuple[float, float]:
+    """
+    Critical demo rule: force all entities to appear within DEMO_RADIUS_KM of the fixed center.
+    We keep it deterministic per-entity for stable demos.
+    """
+    try:
+        _ = float(lat)
+        _ = float(lng)
+    except Exception:
+        pass
+    return _stable_demo_location(f"{entity_type}:{entity_id}", max_km=DEMO_RADIUS_KM)
+
+
 # ── Counter ───────────────────────────────────────────────────────────────────
 def _next_id(collection: str) -> int:
     """Thread-safe auto-increment ID via Firestore transaction."""
@@ -110,7 +136,7 @@ def _next_id(collection: str) -> int:
     @firestore.transactional
     def _txn(transaction, ref):
         snap = ref.get(transaction=transaction)
-        current = (snap.get(collection) or 0) if snap.exists else 0
+        current = (snap.to_dict().get(collection) or 0) if snap.exists else 0
         new_val = current + 1
         transaction.set(ref, {collection: new_val}, merge=True)
         return new_val
@@ -141,6 +167,7 @@ def _user_from_doc(doc) -> dict:
     d.setdefault("rating", 0.0)
     d.setdefault("workload", 0)
     d.setdefault("phone", None)
+    d["lat"], d["lng"] = _apply_demo_location("user", d.get("id", 0), d.get("lat"), d.get("lng"))
     return d
 
 
@@ -171,12 +198,13 @@ def _user_doc_ref(user_id: int):
 
 def create_user(data: dict) -> dict:
     uid = _next_id("users")
+    lat, lng = _apply_demo_location("user", uid, data.get("lat", BASE_LAT), data.get("lng", BASE_LNG))
     doc = {
         "id": uid,
         "name": data.get("name", ""),
         "role": data.get("role", "volunteer"),
-        "lat": data.get("lat", BASE_LAT),
-        "lng": data.get("lng", BASE_LNG),
+        "lat": lat,
+        "lng": lng,
         "availability": data.get("availability", True),
         "status": data.get("status", "available"),
         "phone": data.get("phone"),
@@ -194,7 +222,12 @@ def update_user(user_id: int, updates: dict) -> dict | None:
     ref = _user_doc_ref(user_id)
     if not ref:
         return None
-    ref.update({k: v for k, v in updates.items()})
+    safe = {k: v for k, v in updates.items()}
+    if "lat" in safe or "lng" in safe:
+        lat, lng = _apply_demo_location("user", user_id, safe.get("lat"), safe.get("lng"))
+        safe["lat"] = lat
+        safe["lng"] = lng
+    ref.update(safe)
     return _user_from_doc(ref.get())
 
 
@@ -221,7 +254,7 @@ def get_skills() -> list[dict]:
 
 # ═══════════════════════════ REQUESTS ═════════════════════════════════════════
 
-def _request_from_doc(doc, include_assignments: bool = True) -> dict:
+def _request_from_doc(doc, include_assignments: bool = True, include_support_votes: bool = True) -> dict:
     d = doc.to_dict()
     d["id"] = d.get("id", 0)
     d["created_at"] = _ts(d.get("created_at"))
@@ -238,23 +271,26 @@ def _request_from_doc(doc, include_assignments: bool = True) -> dict:
     d.setdefault("mode", "DISASTER")
     d.setdefault("status", "pending")
     d.setdefault("requester_id", None)
-    d["support_votes"] = get_support_votes(d["id"])
-    d["assignments"] = get_assignments(request_id=d["id"]) if include_assignments else []
+    d["lat"], d["lng"] = _apply_demo_location("request", d.get("id", 0), d.get("lat"), d.get("lng"))
+    d["support_votes"] = get_support_votes(d["id"]) if include_support_votes else []
+    d["assignments"] = get_assignments(request_id=d["id"], include_volunteer=False) if include_assignments else []
     return d
 
 
-def get_requests(mode: str | None = None, status: str | None = None) -> list[dict]:
-    docs = _db().collection("requests").order_by(
-        "created_at", direction=firestore.Query.DESCENDING
-    ).stream()
+def get_requests(mode: str | None = None, status: str | None = None, include_assignments: bool = False, include_support_votes: bool = False) -> list[dict]:
+    docs = _db().collection("requests").stream()
     out = []
     for doc in docs:
-        r = _request_from_doc(doc)
+        r = _request_from_doc(doc, include_assignments=include_assignments, include_support_votes=include_support_votes)
         if mode and r.get("mode") != mode.upper():
             continue
         if status and r.get("status") != status:
             continue
         out.append(r)
+    
+    # Sort in Python by created_at descending
+    from datetime import datetime, timezone
+    out.sort(key=lambda x: x.get("created_at") or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
     return out
 
 
@@ -270,6 +306,7 @@ def _request_doc_ref(request_id: int):
 
 def create_request(data: dict) -> dict:
     rid = _next_id("requests")
+    lat, lng = _apply_demo_location("request", rid, data.get("lat", BASE_LAT), data.get("lng", BASE_LNG))
     doc = {
         "id": rid,
         "requester_id": data.get("requester_id"),
@@ -277,8 +314,8 @@ def create_request(data: dict) -> dict:
         "title": data.get("title", ""),
         "description": data.get("description", ""),
         "mode": data.get("mode", "DISASTER"),
-        "lat": data.get("lat", BASE_LAT),
-        "lng": data.get("lng", BASE_LNG),
+        "lat": lat,
+        "lng": lng,
         "people_count": data.get("people_count", 0),
         "status": data.get("status", "pending"),
         "priority_score": data.get("priority_score", 0),
@@ -303,13 +340,18 @@ def update_request(request_id: int, updates: dict) -> dict | None:
     ref = _request_doc_ref(request_id)
     if not ref:
         return None
-    ref.update({k: v for k, v in updates.items()})
+    safe = {k: v for k, v in updates.items()}
+    if "lat" in safe or "lng" in safe:
+        lat, lng = _apply_demo_location("request", request_id, safe.get("lat"), safe.get("lng"))
+        safe["lat"] = lat
+        safe["lng"] = lng
+    ref.update(safe)
     return _request_from_doc(ref.get())
 
 
 # ═══════════════════════════ ASSIGNMENTS ══════════════════════════════════════
 
-def _assignment_from_doc(doc) -> dict:
+def _assignment_from_doc(doc, include_volunteer: bool = True) -> dict:
     d = doc.to_dict()
     d["id"] = d.get("id", 0)
     d["created_at"] = _ts(d.get("created_at"))
@@ -317,22 +359,34 @@ def _assignment_from_doc(doc) -> dict:
     d.setdefault("score", 0.0)
     d.setdefault("reason", "")
     vid = d.get("volunteer_id")
-    d["volunteer"] = get_user_by_id(vid) if vid else None
+    d["volunteer"] = get_user_by_id(vid) if vid and include_volunteer else None
     return d
 
 
-def get_assignments(request_id: int | None = None, volunteer_id: int | None = None) -> list[dict]:
+def get_assignments(request_id: Union[int, str] | None = None, volunteer_id: Union[int, str] | None = None, include_volunteer: bool = True) -> list[dict]:
     q = _db().collection("assignments")
     if request_id is not None:
         q = q.where("request_id", "==", request_id)
     if volunteer_id is not None:
         q = q.where("volunteer_id", "==", volunteer_id)
-    return [_assignment_from_doc(d) for d in q.stream()]
+    return [_assignment_from_doc(d, include_volunteer=include_volunteer) for d in q.stream()]
+
+
+def get_all_assignments(include_volunteer: bool = False) -> list[dict]:
+    assignments = [_assignment_from_doc(d, include_volunteer=False) for d in _db().collection("assignments").stream()]
+    if include_volunteer:
+        # Bulk fetch users and map by ID (stringified for safety)
+        users_map = {str(u["id"]): u for u in get_users()}
+        for a in assignments:
+            vid = a.get("volunteer_id")
+            if vid:
+                a["volunteer"] = users_map.get(str(vid))
+    return assignments
 
 
 def get_assignment_by_id(assignment_id: int) -> dict | None:
     docs = list(_db().collection("assignments").where("id", "==", assignment_id).limit(1).stream())
-    return _assignment_from_doc(docs[0]) if docs else None
+    return _assignment_from_doc(docs[0], include_volunteer=True) if docs else None
 
 
 def _assignment_doc_ref(assignment_id: int):
@@ -417,9 +471,13 @@ def add_support_vote(request_id: int, requester_id: int, points: int = 10) -> bo
     return True
 
 
-def get_support_votes(request_id: int) -> list[dict]:
+def get_support_votes(request_id: Union[int, str]) -> list[dict]:
     docs = _db().collection("support_votes").where("request_id", "==", request_id).stream()
     return [d.to_dict() for d in docs]
+
+
+def get_all_support_votes() -> list[dict]:
+    return [d.to_dict() for d in _db().collection("support_votes").stream()]
 
 
 # ═══════════════════════════ REQUEST STATUS ════════════════════════════════════

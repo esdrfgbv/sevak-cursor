@@ -1,11 +1,15 @@
-"""Tasks router with /api/tasks/ prefix. Maps Request model to 'task' concept."""
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from fastapi import APIRouter, HTTPException
 
-from .. import models, schemas
-from ..database import get_db
-from ..services.assignment_engine import calculate_required_volunteers, match_volunteers, run_assignment, score_volunteer_for_request
+from .. import schemas
+from ..firebase_service import (
+    create_request,
+    ensure_skills,
+    get_request_by_id,
+    get_requests,
+    update_request,
+)
+from ..models import request_from_dict
+from ..services.assignment_engine import calculate_required_volunteers, match_volunteers, run_assignment
 from ..services.cluster_service import cluster_metrics_for_request, haversine_km
 from ..services.incident_matching import duplicate_signal_points, find_duplicate_request
 from ..services.priority_engine import calculate_priority, explain_priority
@@ -13,20 +17,6 @@ from ..services.state_manager import update_request_status
 from ..services.vision_pipeline import analyze_incident_image
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
-
-
-def _load_request(db: Session, request_id: int) -> models.Request:
-    return db.scalar(
-        select(models.Request)
-        .options(
-            selectinload(models.Request.skills),
-            selectinload(models.Request.assignments)
-            .selectinload(models.Assignment.volunteer)
-            .selectinload(models.User.skills),
-            selectinload(models.Request.support_votes),
-        )
-        .where(models.Request.id == request_id)
-    )
 
 
 def _fit_label(score: float) -> str:
@@ -47,7 +37,7 @@ def _response_tag(mode: str, index: int) -> str:
     return "Ready Backup" if mode == "DISASTER" else "Qualified Match"
 
 
-def _clean_from_assignment(request_obj: models.Request, assignment: models.Assignment, index: int) -> schemas.CleanVolunteerDecision | None:
+def _clean_from_assignment(request_obj, assignment, index: int) -> schemas.CleanVolunteerDecision | None:
     if not assignment.volunteer:
         return None
     distance = haversine_km(request_obj.lat, request_obj.lng, assignment.volunteer.lat, assignment.volunteer.lng)
@@ -61,7 +51,7 @@ def _clean_from_assignment(request_obj: models.Request, assignment: models.Assig
     )
 
 
-def _clean_from_match(request_obj: models.Request, match: dict, index: int) -> schemas.CleanVolunteerDecision:
+def _clean_from_match(request_obj, match: dict, index: int) -> schemas.CleanVolunteerDecision:
     volunteer = match["volunteer"]
     distance = haversine_km(request_obj.lat, request_obj.lng, volunteer.lat, volunteer.lng)
     return schemas.CleanVolunteerDecision(
@@ -74,7 +64,7 @@ def _clean_from_match(request_obj: models.Request, match: dict, index: int) -> s
     )
 
 
-def _clean_assignments(request_obj: models.Request) -> list[schemas.CleanVolunteerDecision]:
+def _clean_assignments(request_obj) -> list[schemas.CleanVolunteerDecision]:
     clean = []
     for index, assignment in enumerate(request_obj.assignments or []):
         item = _clean_from_assignment(request_obj, assignment, index)
@@ -84,44 +74,24 @@ def _clean_assignments(request_obj: models.Request) -> list[schemas.CleanVolunte
 
 
 @router.post("", response_model=schemas.RequestCreateResponse)
-def create_task(payload: schemas.RequestCreate, db: Session = Depends(get_db)):
+def create_task(payload: schemas.RequestCreate):
     mode = (payload.mode or "DISASTER").upper()
     if mode not in ("DISASTER", "NGO"):
         raise HTTPException(status_code=400, detail="Mode must be DISASTER or NGO")
 
-    print(
-        "[SEVAK DEBUG] TASK_PAYLOAD "
-        f"mode={mode} people_count={payload.people_count} "
-        f"incident_type={payload.incident_type!r}"
-    )
+    ensure_skills(payload.required_skills)
 
-    # DISASTER mode: image verification is MANDATORY
-    if mode == "DISASTER" and not payload.image_data:
-        # Allow creation but mark as not_submitted
-        pass
-
-    skill_models = []
-    for skill_name in payload.required_skills:
-        skill = db.scalar(select(models.Skill).where(models.Skill.name == skill_name))
-        if not skill:
-            skill = models.Skill(name=skill_name)
-            db.add(skill)
-            db.flush()
-        skill_models.append(skill)
-
-    cluster_boost, _cluster_size = cluster_metrics_for_request(db, payload.lat, payload.lng)
+    cluster_boost, _cluster_size = cluster_metrics_for_request(payload.lat, payload.lng)
     priority_score, priority_level = calculate_priority(
         payload.description, payload.people_count, payload.required_skills, cluster_boost,
     )
 
-    # ENFORCE: DISASTER mode requires image verification
     if mode == "DISASTER" and not payload.image_data:
         raise HTTPException(
             status_code=400, 
             detail="DISASTER mode requires evidence photo for AI verification. Please upload an image."
         )
 
-    # Image verification: run for DISASTER, skip for NGO
     verification = None
     image_status = "not_submitted"
     image_reason = "No image attached."
@@ -135,16 +105,14 @@ def create_task(payload: schemas.RequestCreate, db: Session = Depends(get_db)):
         )
         verification = schemas.ImageVerificationSummary(**verification_payload)
     else:
-        # NGO mode: skip image verification entirely
         image_status = "not_required"
         image_reason = "Image verification skipped for NGO mode."
-        image_url = payload.image_data  # Store if provided but don't verify
+        image_url = payload.image_data
         verification = schemas.ImageVerificationSummary(
             is_disaster=None, confidence=None, labels=[], reason=image_reason, warnings=[]
         )
 
-    # Duplicate detection
-    duplicate_request, _ = find_duplicate_request(db, payload)
+    duplicate_request, _ = find_duplicate_request(payload)
     duplicate_points_added = 0
 
     if duplicate_request:
@@ -158,49 +126,50 @@ def create_task(payload: schemas.RequestCreate, db: Session = Depends(get_db)):
         )
         duplicate_request.priority_score = dup_priority_score
         duplicate_request.priority_level = dup_priority_level
-        db.add(duplicate_request)
+        
+        update_request(duplicate_request.id, {
+            "severity_support_points": duplicate_request.severity_support_points,
+            "priority_score": duplicate_request.priority_score,
+            "priority_level": duplicate_request.priority_level
+        })
+        
         if (duplicate_request.mode or "DISASTER").upper() == "DISASTER":
-            run_assignment(db, duplicate_request.id, {a.volunteer_id for a in duplicate_request.assignments})
-        update_request_status(db, duplicate_request)
+            run_assignment(duplicate_request.id, {a.volunteer_id for a in duplicate_request.assignments})
+        update_request_status(duplicate_request.id)
+        
         priority_score = dup_priority_score
         priority_level = dup_priority_level
 
-    request_obj = models.Request(
-        requester_id=payload.requester_id,
-        incident_type=payload.incident_type,
-        title=payload.title,
-        description=payload.description,
-        mode=mode,
-        lat=payload.lat,
-        lng=payload.lng,
-        people_count=payload.people_count,
-        priority_score=priority_score,
-        priority_level=priority_level,
-        cluster_boost=cluster_boost,
-        severity_support_points=duplicate_points_added,
-        image_url=image_url,
-        image_verification_status=image_status,
-        image_verification_reason=image_reason,
-    )
-    request_obj.skills = skill_models
-    db.add(request_obj)
-    db.flush()
-    print(
-        "[SEVAK DEBUG] TASK_CREATED "
-        f"id={request_obj.id} people_count={request_obj.people_count} "
-        f"priority={request_obj.priority_level}"
-    )
+    req_data = {
+        "requester_id": payload.requester_id,
+        "incident_type": payload.incident_type,
+        "title": payload.title,
+        "description": payload.description,
+        "mode": mode,
+        "lat": payload.lat,
+        "lng": payload.lng,
+        "people_count": payload.people_count,
+        "priority_score": priority_score,
+        "priority_level": priority_level,
+        "cluster_boost": cluster_boost,
+        "severity_support_points": duplicate_points_added,
+        "image_url": image_url,
+        "image_verification_status": image_status,
+        "image_verification_reason": image_reason,
+        "required_skills": payload.required_skills,
+    }
+    
+    created = create_request(req_data)
+    request_id = created["id"]
 
-    # DISASTER mode: auto-assign volunteers
-    # NGO mode: just match but don't assign
     match_results = None
     if mode == "DISASTER":
-        run_assignment(db, request_obj.id)
+        run_assignment(request_id)
     else:
-        # For NGO, compute match results to show to UI
-        matched = match_volunteers(db, request_obj.id)
+        matched = match_volunteers(request_id)
+        request_obj = request_from_dict(get_request_by_id(request_id))
         match_results = schemas.MatchResponse(
-            task_id=request_obj.id,
+            task_id=request_id,
             mode=mode,
             top_volunteers=[
                 schemas.MatchResult(
@@ -215,11 +184,10 @@ def create_task(payload: schemas.RequestCreate, db: Session = Depends(get_db)):
             auto_assigned=False,
         )
 
-    update_request_status(db, request_obj)
-    db.commit()
+    update_request_status(request_id)
 
-    request_detail = _load_request(db, request_obj.id)
-    duplicate_detail = _load_request(db, duplicate_request.id) if duplicate_request else None
+    request_detail = request_from_dict(get_request_by_id(request_id))
+    duplicate_detail = request_from_dict(get_request_by_id(duplicate_request.id)) if duplicate_request else None
     suggested = list(request_detail.assignments) if request_detail else []
 
     return {
@@ -238,41 +206,29 @@ def create_task(payload: schemas.RequestCreate, db: Session = Depends(get_db)):
 
 
 @router.get("", response_model=list[schemas.RequestDetail])
-def list_tasks(mode: str | None = None, status: str | None = None, db: Session = Depends(get_db)):
-    query = (
-        select(models.Request)
-        .options(
-            selectinload(models.Request.skills),
-            selectinload(models.Request.assignments)
-            .selectinload(models.Assignment.volunteer)
-            .selectinload(models.User.skills),
-            selectinload(models.Request.support_votes),
-        )
-    )
-    if mode:
-        query = query.where(models.Request.mode == mode.upper())
-    if status:
-        query = query.where(models.Request.status == status)
-    query = query.order_by(models.Request.created_at.desc())
-    return db.scalars(query).all()
+def list_tasks(mode: str | None = None, status: str | None = None):
+    requests = [request_from_dict(d) for d in get_requests(mode=mode, status=status)]
+    return requests
 
 
 @router.get("/{task_id}", response_model=schemas.RequestDetail)
-def get_task(task_id: int, db: Session = Depends(get_db)):
-    request_obj = _load_request(db, task_id)
-    if not request_obj:
+def get_task(task_id: int):
+    req_dict = get_request_by_id(task_id)
+    if not req_dict:
         raise HTTPException(status_code=404, detail="Task not found")
-    return request_obj
+    return request_from_dict(req_dict)
 
 
 @router.get("/{task_id}/decision-flow", response_model=schemas.DecisionFlowResponse)
-def decision_flow(task_id: int, db: Session = Depends(get_db)):
-    request_obj = _load_request(db, task_id)
-    if not request_obj:
+def decision_flow(task_id: int):
+    req_dict = get_request_by_id(task_id)
+    if not req_dict:
         raise HTTPException(status_code=404, detail="Task not found")
-
+        
+    request_obj = request_from_dict(req_dict)
     mode = (request_obj.mode or "DISASTER").upper()
     selection_reason = "Proximity + skill + availability" if mode == "DISASTER" else "Skill fit + reliability + acceptance readiness"
+    
     return schemas.DecisionFlowResponse(
         priority=explain_priority(
             request_obj.description,
@@ -288,85 +244,84 @@ def decision_flow(task_id: int, db: Session = Depends(get_db)):
 
 
 @router.put("/{task_id}", response_model=schemas.RequestDetail)
-def update_task(task_id: int, payload: schemas.TaskUpdate, db: Session = Depends(get_db)):
-    request_obj = _load_request(db, task_id)
-    if not request_obj:
+def update_task(task_id: int, payload: schemas.TaskUpdate):
+    req_dict = get_request_by_id(task_id)
+    if not req_dict:
         raise HTTPException(status_code=404, detail="Task not found")
+        
+    updates = {}
     if payload.title is not None:
-        request_obj.title = payload.title
+        updates["title"] = payload.title
     if payload.description is not None:
-        request_obj.description = payload.description
+        updates["description"] = payload.description
     if payload.status is not None:
-        request_obj.status = payload.status
+        updates["status"] = payload.status
     if payload.priority_level is not None:
-        request_obj.priority_level = payload.priority_level
+        updates["priority_level"] = payload.priority_level
     if payload.mode is not None:
-        request_obj.mode = payload.mode.upper()
-    db.add(request_obj)
-    db.commit()
-    return _load_request(db, task_id)
+        updates["mode"] = payload.mode.upper()
+        
+    if updates:
+        update_request(task_id, updates)
+        
+    return request_from_dict(get_request_by_id(task_id))
 
 
 @router.post("/bulk", response_model=list[schemas.RequestDetail])
-def bulk_create_tasks(payload: schemas.TaskBulkCreate, db: Session = Depends(get_db)):
+def bulk_create_tasks(payload: schemas.TaskBulkCreate):
     created_ids = []
     for task_data in payload.tasks:
-        skill_models = []
-        for skill_name in task_data.required_skills:
-            skill = db.scalar(select(models.Skill).where(models.Skill.name == skill_name))
-            if not skill:
-                skill = models.Skill(name=skill_name)
-                db.add(skill)
-                db.flush()
-            skill_models.append(skill)
+        ensure_skills(task_data.required_skills)
 
         mode = (task_data.mode or "DISASTER").upper()
-        cluster_boost, _ = cluster_metrics_for_request(db, task_data.lat, task_data.lng)
+        cluster_boost, _ = cluster_metrics_for_request(task_data.lat, task_data.lng)
         priority_score, priority_level = calculate_priority(
             task_data.description, task_data.people_count, task_data.required_skills, cluster_boost,
         )
 
-        request_obj = models.Request(
-            requester_id=task_data.requester_id,
-            incident_type=task_data.incident_type,
-            title=task_data.title,
-            description=task_data.description,
-            mode=mode,
-            lat=task_data.lat,
-            lng=task_data.lng,
-            people_count=task_data.people_count,
-            priority_score=priority_score,
-            priority_level=priority_level,
-            cluster_boost=cluster_boost,
-        )
-        request_obj.skills = skill_models
-        db.add(request_obj)
-        db.flush()
+        req_data = {
+            "requester_id": task_data.requester_id,
+            "incident_type": task_data.incident_type,
+            "title": task_data.title,
+            "description": task_data.description,
+            "mode": mode,
+            "lat": task_data.lat,
+            "lng": task_data.lng,
+            "people_count": task_data.people_count,
+            "priority_score": priority_score,
+            "priority_level": priority_level,
+            "cluster_boost": cluster_boost,
+            "required_skills": task_data.required_skills,
+        }
+        
+        created = create_request(req_data)
+        request_id = created["id"]
+        
         if mode == "DISASTER":
-            run_assignment(db, request_obj.id)
-        update_request_status(db, request_obj)
-        created_ids.append(request_obj.id)
+            run_assignment(request_id)
+        update_request_status(request_id)
+        created_ids.append(request_id)
 
-    db.commit()
     results = []
     for rid in created_ids:
-        results.append(_load_request(db, rid))
+        results.append(request_from_dict(get_request_by_id(rid)))
     return results
 
 
 @router.post("/{task_id}/match", response_model=schemas.MatchResponse)
-def match_task(task_id: int, db: Session = Depends(get_db)):
-    request_obj = _load_request(db, task_id)
-    if not request_obj:
+def match_task(task_id: int):
+    req_dict = get_request_by_id(task_id)
+    if not req_dict:
         raise HTTPException(status_code=404, detail="Task not found")
-
+        
+    request_obj = request_from_dict(req_dict)
     mode = (request_obj.mode or "DISASTER").upper()
     auto_assigned = False
+    
     if mode == "DISASTER":
-        created = run_assignment(db, task_id)
+        created = run_assignment(task_id)
         auto_assigned = bool(created)
-        db.commit()
-        refreshed = _load_request(db, task_id)
+        refreshed = request_from_dict(get_request_by_id(task_id))
         assignments = list(refreshed.assignments) if refreshed else []
         return schemas.MatchResponse(
             task_id=task_id,
@@ -385,8 +340,7 @@ def match_task(task_id: int, db: Session = Depends(get_db)):
             auto_assigned=auto_assigned,
         )
 
-    matched = match_volunteers(db, task_id)
-    db.commit()
+    matched = match_volunteers(task_id)
     return schemas.MatchResponse(
         task_id=task_id,
         mode=mode,

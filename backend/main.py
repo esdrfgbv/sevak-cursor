@@ -6,18 +6,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import config, schemas
 from .routers import analytics, assignments, assignments_api, requests, tasks, users, volunteers
 from .routers.auth import router as auth_router
-from .services.firebase_seeder import seed_firebase_demo_data
+from .firebase_service import seed_if_empty
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     # Initialize Firebase and seed demo data on startup
-    print("🚀 Starting SEVAK with Firebase backend...")
+    print("[START] Starting SEVAK with Firebase backend...")
     try:
-        seed_firebase_demo_data()
-        print("✅ Firebase initialized and demo data ready")
+        seed_if_empty()
+        print("[OK] Firebase initialized and demo data ready")
     except Exception as e:
-        print(f"⚠️  Firebase initialization warning: {e}")
+        print(f"[WARNING] Firebase initialization warning: {e}")
     yield
 
 
@@ -50,4 +50,4 @@ app.include_router(assignments_api.router)
 app.include_router(analytics.router)
 app.include_router(requests.router)
 app.include_router(users.router)
-app.include_router(assignments.router)
+# NOTE: `assignments.router` exposes legacy non-`/api` routes; keep `/api/assignments/*` as the standard surface.

@@ -1,12 +1,12 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Union, Any
 
 from pydantic import AliasChoices, BaseModel, Field
 
 
 # ── Skill ──
 class SkillRead(BaseModel):
-    id: int
+    id: Union[int, str]
     name: str
     model_config = {"from_attributes": True}
 
@@ -29,7 +29,7 @@ class UserCreate(UserBase):
 
 
 class UserRead(UserBase):
-    id: int
+    id: Union[int, str]
     skills: List[SkillRead] = []
     model_config = {"from_attributes": True}
 
@@ -60,7 +60,7 @@ class AuthResponse(BaseModel):
 
 # ── Request / Task ──
 class RequestCreate(BaseModel):
-    requester_id: Optional[int] = None
+    requester_id: Optional[Union[int, str]] = None
     incident_type: str
     title: str
     description: str
@@ -80,8 +80,8 @@ class TaskBulkCreate(BaseModel):
 
 
 class RequestRead(BaseModel):
-    id: int
-    requester_id: Optional[int] = None
+    id: Union[int, str]
+    requester_id: Optional[Union[int, str]] = None
     incident_type: str
     title: str
     description: str
@@ -115,9 +115,9 @@ class TaskUpdate(BaseModel):
 
 # ── Assignment ──
 class AssignmentRead(BaseModel):
-    id: int
-    request_id: int
-    volunteer_id: int
+    id: Union[int, str]
+    request_id: Union[int, str]
+    volunteer_id: Union[int, str]
     score: float
     match_label: Optional[str] = None
     status: str
@@ -128,7 +128,7 @@ class AssignmentRead(BaseModel):
 
 
 class CleanVolunteerDecision(BaseModel):
-    id: int
+    id: Union[int, str]
     name: str
     fit: str
     reason: str
@@ -146,21 +146,21 @@ class NearbyRequestRead(RequestDetail):
 
 
 class RequestSupportCreate(BaseModel):
-    requester_id: int
+    requester_id: Union[int, str]
     points: int = 10
 
 
 class RequestClaimCreate(BaseModel):
-    volunteer_id: int
+    volunteer_id: Union[int, str]
 
 
 class RequestResolvePayload(BaseModel):
-    requester_id: int
+    requester_id: Union[int, str]
 
 
 class AssignmentCreate(BaseModel):
-    task_id: int
-    volunteer_id: int
+    task_id: Union[int, str]
+    volunteer_id: Union[int, str]
 
 
 class AssignmentStatusUpdate(BaseModel):
@@ -197,8 +197,8 @@ class RatingCreate(BaseModel):
 
 
 class RatingRead(BaseModel):
-    id: int
-    assignment_id: int
+    id: Union[int, str]
+    assignment_id: Union[int, str]
     rating: int
     comment: Optional[str] = None
     created_at: datetime
@@ -214,7 +214,7 @@ class MatchResult(BaseModel):
 
 
 class MatchResponse(BaseModel):
-    task_id: int
+    task_id: Union[int, str]
     mode: str
     top_volunteers: List[MatchResult]
     clean_volunteers: List[CleanVolunteerDecision] = []
@@ -267,7 +267,7 @@ class HeatmapPoint(BaseModel):
 
 
 class VolunteerPerformance(BaseModel):
-    volunteer_id: int
+    volunteer_id: Union[int, str]
     name: str
     tasks_completed: int
     avg_rating: float

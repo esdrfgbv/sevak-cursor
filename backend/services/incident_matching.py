@@ -1,11 +1,10 @@
 import re
 from collections.abc import Iterable
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
-
 from .. import models, schemas
+from ..models import request_from_dict
 from .cluster_service import haversine_km
+from ..firebase_service import get_requests
 from .priority_engine import calculate_priority
 
 STOP_WORDS = {
@@ -72,17 +71,9 @@ def _duplicate_similarity(payload: schemas.RequestCreate, request_obj: models.Re
     return similarity, distance_km
 
 
-def find_duplicate_request(db: Session, payload: schemas.RequestCreate) -> tuple[models.Request | None, float]:
-    requests = db.scalars(
-        select(models.Request)
-        .options(
-            selectinload(models.Request.skills),
-            selectinload(models.Request.assignments).selectinload(models.Assignment.volunteer).selectinload(models.User.skills),
-            selectinload(models.Request.support_votes),
-        )
-        .where(models.Request.status != "completed")
-        .order_by(models.Request.priority_score.desc(), models.Request.created_at.desc())
-    ).all()
+def find_duplicate_request(payload: schemas.RequestCreate) -> tuple[models.Request | None, float]:
+    request_dicts = get_requests()
+    requests = [request_from_dict(d) for d in request_dicts if d.get("status") != "completed"]
 
     best_match = None
     best_similarity = 0.0

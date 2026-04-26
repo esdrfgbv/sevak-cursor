@@ -18,23 +18,6 @@ const Analytics = () => {
   const [performers, setPerformers] = useState<VolunteerPerformance[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Generate time-series data for trends
-  const generateTimeSeriesData = () => {
-    const hours = Array.from({ length: 12 }, (_, i) => {
-      const hour = i * 2;
-      return {
-        time: `${String(hour).padStart(2, "0")}:00`,
-        created: Math.floor(Math.random() * 15) + 5,
-        completed: Math.floor(Math.random() * 12) + 2,
-        active: Math.floor(Math.random() * 20) + 10,
-        volunteers: Math.floor(Math.random() * 8) + 2,
-      };
-    });
-    return hours;
-  };
-
-  const timeSeriesData = generateTimeSeriesData();
-
   useEffect(() => {
     const fetchAll = async () => {
       try {
@@ -101,61 +84,8 @@ const Analytics = () => {
           ))}
         </div>
 
-        {/* Time-Series Trends */}
-        <div className="bg-card border border-border rounded-xl p-5 shadow-elegant">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-sm font-semibold">Activity Trend (24h)</h3>
-              <p className="text-xs text-muted-foreground">Tasks created vs completed over time</p>
-            </div>
-            <div className="flex items-center gap-3 text-xs">
-              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-primary" /> Created</span>
-              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-success" /> Completed</span>
-              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-warning" /> Active</span>
-            </div>
-          </div>
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={timeSeriesData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                <XAxis dataKey="time" stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
-                <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
-                <Tooltip contentStyle={tooltipStyle} />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Line type="monotone" dataKey="created" stroke="hsl(var(--primary))" strokeWidth={2} dot={false} name="Created" />
-                <Line type="monotone" dataKey="completed" stroke="hsl(var(--success))" strokeWidth={2} dot={false} name="Completed" />
-                <Line type="monotone" dataKey="active" stroke="hsl(var(--warning))" strokeWidth={2} dot={false} name="Active" />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Volunteer Activity */}
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-          <div className="xl:col-span-2 bg-card border border-border rounded-xl p-5 shadow-elegant">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-sm font-semibold">Volunteer Engagement (24h)</h3>
-                <p className="text-xs text-muted-foreground">Active volunteers on assignments</p>
-              </div>
-              <div className="flex items-center gap-3 text-xs">
-                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-primary" /> Active</span>
-              </div>
-            </div>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={timeSeriesData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                  <XAxis dataKey="time" stroke="hsl(var(--muted-foreground))" fontSize={10} tickLine={false} axisLine={false} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
-                  <Tooltip contentStyle={tooltipStyle} />
-                  <Line type="monotone" dataKey="volunteers" stroke="hsl(var(--primary))" strokeWidth={3} dot={{ r: 4 }} name="Volunteers" />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          <div className="bg-card border border-border rounded-xl shadow-elegant">
+        {/* Top performers */}
+        <div className="bg-card border border-border rounded-xl shadow-elegant">
             <div className="px-5 py-4 border-b border-border flex items-center gap-2">
               <Award className="h-4 w-4 text-warning" />
               <h3 className="text-sm font-semibold">Top 5</h3>
@@ -185,7 +115,6 @@ const Analytics = () => {
               )}
             </div>
           </div>
-        </div>
 
         {/* Skills Analysis */}
         <div className="bg-card border border-border rounded-xl p-5 shadow-elegant">
