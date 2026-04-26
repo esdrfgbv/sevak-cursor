@@ -1,8 +1,8 @@
-from .. import config
-from ..models import Assignment, Request, User, user_from_firestore
-from .cluster_service import haversine_km
-from ..firebase_service import get_users, get_request_by_id, update_request
-from .state_manager import update_request_status, update_volunteer_status
+import config
+from models import Assignment, Request, User, user_from_firestore
+from services.cluster_service import haversine_km
+from firebase_service import get_users, get_request_by_id, update_request
+from services.state_manager import update_request_status, update_volunteer_status
 
 
 MAX_AI_CANDIDATES = 25
@@ -347,7 +347,7 @@ def run_assignment(request_id: str, excluded_volunteer_ids: set[str] | None = No
         score = round(float(selection.get("score", 0)) / 100, 3)
         reason = str(selection.get("reason") or candidate["justification"])
         
-        from ..firebase_service import create_assignment, update_user
+        from firebase_service import create_assignment, update_user
         
         assignment_data = {
             'request_id': request_id,

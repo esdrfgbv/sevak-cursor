@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, Union
 
-from ..services.priority_engine import explain_priority
+from services.priority_engine import explain_priority
 
 
 @dataclass

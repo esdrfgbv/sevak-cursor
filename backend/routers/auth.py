@@ -1,8 +1,8 @@
 """Auth router with /api/auth/ prefix."""
 from fastapi import APIRouter, HTTPException
 
-from .. import schemas
-from ..firebase_service import get_user_by_name, create_user, update_user
+import schemas
+from firebase_service import get_user_by_name, create_user, update_user
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -48,7 +48,7 @@ def _upsert_user(payload) -> dict:
     # Handle skills for volunteers
     if payload.role == "volunteer" and payload.skills:
         # Standardize skills via the main Firebase service layer (auto-incremented skills collection).
-        from ..firebase_service import ensure_skills
+        from firebase_service import ensure_skills
 
         ensure_skills(list(payload.skills))
         update_user(user.get("id"), {"skills": list(payload.skills)})

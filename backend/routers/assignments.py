@@ -1,14 +1,14 @@
 from fastapi import APIRouter, HTTPException
 
-from .. import schemas
-from ..firebase_service import (
+import schemas
+from firebase_service import (
     get_assignment_by_id,
     get_request_by_id,
     update_assignment,
 )
-from ..models import assignment_from_dict, request_from_dict
-from ..services.assignment_engine import reassign_request
-from ..services.state_manager import ASSIGNMENT_TO_VOLUNTEER, update_request_status, update_volunteer_status
+from models import assignment_from_dict, request_from_dict
+from services.assignment_engine import reassign_request
+from services.state_manager import ASSIGNMENT_TO_VOLUNTEER, update_request_status, update_volunteer_status
 
 router = APIRouter()
 

@@ -3,10 +3,10 @@ from datetime import datetime
 
 from fastapi import APIRouter
 
-from .. import schemas
-from ..firebase_service import get_all_assignments, get_requests, get_users
-from ..models import request_from_dict, user_from_dict, assignment_from_dict
-from ..services.gemini_service import generate_dashboard_insight
+import schemas
+from firebase_service import get_all_assignments, get_requests, get_users
+from models import request_from_dict, user_from_dict, assignment_from_dict
+from services.gemini_service import generate_dashboard_insight
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 

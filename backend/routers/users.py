@@ -1,7 +1,8 @@
 from fastapi import APIRouter, HTTPException
 
-from .. import models, schemas
-from ..firebase_service import (
+import models
+import schemas
+from firebase_service import (
     get_assignments,
     get_requests,
     get_user_by_id,
@@ -9,9 +10,9 @@ from ..firebase_service import (
     update_request,
     update_user,
 )
-from ..models import assignment_from_dict, request_from_dict, user_from_dict
-from ..services.cluster_service import haversine_km
-from ..services.state_manager import update_request_status, update_volunteer_status
+from models import assignment_from_dict, request_from_dict, user_from_dict
+from services.cluster_service import haversine_km
+from services.state_manager import update_request_status, update_volunteer_status
 
 router = APIRouter()
 
@@ -118,7 +119,7 @@ def nearby_requests_for_requester(requester_id: int, radius_km: float = 10):
 @router.get("/admin/overview", response_model=schemas.AdminOverview)
 def admin_overview():
     try:
-        from ..firebase_service import get_all_assignments, get_all_support_votes
+        from firebase_service import get_all_assignments, get_all_support_votes
         
         # 1. Fetch everything in bulk
         raw_requests = get_requests(include_assignments=False, include_support_votes=False)

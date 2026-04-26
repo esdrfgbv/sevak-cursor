@@ -1,11 +1,12 @@
 import re
 from collections.abc import Iterable
 
-from .. import models, schemas
-from ..models import request_from_dict
-from .cluster_service import haversine_km
-from ..firebase_service import get_requests
-from .priority_engine import calculate_priority
+import models
+import schemas
+from models import request_from_dict
+from services.cluster_service import haversine_km
+from firebase_service import get_requests
+from services.priority_engine import calculate_priority
 
 STOP_WORDS = {
     "a",

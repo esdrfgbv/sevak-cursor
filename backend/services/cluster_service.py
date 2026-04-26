@@ -1,8 +1,8 @@
-from ..firebase_service import get_requests
-from ..models import request_from_dict
+from firebase_service import get_requests
+from models import request_from_dict
 
-from ..models import Request
-from ..utils.geo import haversine_km  # re-exported for legacy imports
+from models import Request
+from utils.geo import haversine_km  # re-exported for legacy imports
 
 
 def cluster_metrics_for_request(lat: float, lng: float, radius_km: float = 0.5) -> tuple[int, int]:

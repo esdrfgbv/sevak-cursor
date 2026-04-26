@@ -1,20 +1,20 @@
 from fastapi import APIRouter, HTTPException
 
-from .. import schemas
-from ..firebase_service import (
+import schemas
+from firebase_service import (
     create_request,
     ensure_skills,
     get_request_by_id,
     get_requests,
     update_request,
 )
-from ..models import request_from_dict
-from ..services.assignment_engine import calculate_required_volunteers, match_volunteers, run_assignment
-from ..services.cluster_service import cluster_metrics_for_request, haversine_km
-from ..services.incident_matching import duplicate_signal_points, find_duplicate_request
-from ..services.priority_engine import calculate_priority, explain_priority
-from ..services.state_manager import update_request_status
-from ..services.vision_pipeline import analyze_incident_image
+from models import request_from_dict
+from services.assignment_engine import calculate_required_volunteers, match_volunteers, run_assignment
+from services.cluster_service import cluster_metrics_for_request, haversine_km
+from services.incident_matching import duplicate_signal_points, find_duplicate_request
+from services.priority_engine import calculate_priority, explain_priority
+from services.state_manager import update_request_status
+from services.vision_pipeline import analyze_incident_image
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 

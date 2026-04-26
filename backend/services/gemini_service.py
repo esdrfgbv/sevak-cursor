@@ -12,7 +12,7 @@ import re
 import time
 from typing import Any
 
-from .. import config
+import config
 
 _JSON_FENCE = re.compile(r"\{[\s\S]*\}")
 _VISION_CACHE_TTL_SECONDS = 15 * 60

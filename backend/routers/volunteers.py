@@ -1,16 +1,17 @@
 from fastapi import APIRouter, HTTPException
 
-from .. import models, schemas
-from ..firebase_service import (
+import models
+import schemas
+from firebase_service import (
     ensure_skills,
     get_assignments,
     get_user_by_id,
     get_users,
     update_user,
 )
-from ..models import assignment_from_dict, user_from_dict
-from ..services.cluster_service import haversine_km
-from ..services.state_manager import update_volunteer_status
+from models import assignment_from_dict, user_from_dict
+from services.cluster_service import haversine_km
+from services.state_manager import update_volunteer_status
 
 router = APIRouter(prefix="/api/volunteers", tags=["volunteers"])
 

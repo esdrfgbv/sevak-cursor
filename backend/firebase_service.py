@@ -12,7 +12,7 @@ from typing import Any
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-from . import config
+import config
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 BASE_LAT = 17.3850

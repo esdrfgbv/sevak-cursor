@@ -1,7 +1,7 @@
 """State manager — works with dataclass models (no DB session needed)."""
 from __future__ import annotations
 
-from .. import firebase_service
+import firebase_service
 
 VOLUNTEER_TRANSITIONS = {
     "available": {"assigned"},

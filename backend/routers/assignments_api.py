@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
-from .. import schemas
-from ..firebase_service import (
+import schemas
+from firebase_service import (
     create_assignment,
     get_assignment_by_id,
     get_request_by_id,
@@ -12,9 +12,9 @@ from ..firebase_service import (
     get_rating_by_assignment,
     get_ratings_for_volunteer,
 )
-from ..models import assignment_from_dict, request_from_dict, user_from_dict, rating_from_dict
-from ..services.assignment_engine import reassign_request, score_volunteer_for_request
-from ..services.state_manager import ASSIGNMENT_TO_VOLUNTEER, update_request_status, update_volunteer_status
+from models import assignment_from_dict, request_from_dict, user_from_dict, rating_from_dict
+from services.assignment_engine import reassign_request, score_volunteer_for_request
+from services.state_manager import ASSIGNMENT_TO_VOLUNTEER, update_request_status, update_volunteer_status
 
 router = APIRouter(prefix="/api/assignments", tags=["assignments"])
 

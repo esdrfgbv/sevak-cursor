@@ -7,9 +7,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .. import config
-from .gemini_service import verify_image as gemini_verify_image
-from .image_verification import verify_image_data
+import config
+from services.gemini_service import verify_image as gemini_verify_image
+from services.image_verification import verify_image_data
 
 _STOP_WORDS = {
     "the",
