@@ -1,4 +1,4 @@
-const API_BASE = "http://127.0.0.1:8000";
+const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -42,6 +42,7 @@ export interface Assignment {
   request_id: number;
   volunteer_id: number;
   score: number;
+  match_label?: string | null;
   status: string;
   reason: string;
   created_at: string;
@@ -61,12 +62,14 @@ export interface Task {
   status: string;
   priority_score: number;
   priority_level: string;
+  priority_explanation?: string | null;
   cluster_boost: number;
   severity_support_points: number;
   supporter_count: number;
   image_url: string | null;
   image_verification_status: string;
   image_verification_reason: string | null;
+  ai_insight: string | null;
   created_at: string;
   skills: Skill[];
   assignments: Assignment[];
@@ -75,20 +78,34 @@ export interface Task {
 export interface MatchResult {
   volunteer: User;
   score: number;
+  match_label?: string | null;
   justification: string;
+}
+
+export interface CleanVolunteerDecision {
+  id: number;
+  name: string;
+  fit: string;
+  reason: string;
+  distance: string;
+  tag: string;
 }
 
 export interface MatchResponse {
   task_id: number;
   mode: string;
   top_volunteers: MatchResult[];
+  clean_volunteers: CleanVolunteerDecision[];
   auto_assigned: boolean;
 }
 
 export interface TaskCreateResponse {
   request: Task;
+  ai_insight?: string | null;
+  priority_explanation?: string | null;
   assigned_count: number;
   suggested_volunteers: Assignment[];
+  clean_volunteers: CleanVolunteerDecision[];
   duplicate_detected: boolean;
   duplicate_points_added: number;
   duplicate_request: Task | null;
@@ -116,6 +133,7 @@ export interface DashboardAnalytics {
   tasks_by_status: Record<string, number>;
   tasks_by_priority: Record<string, number>;
   tasks_by_mode: Record<string, number>;
+  ai_insight: string;
   recent_activity: Array<{
     type: string;
     message: string;
@@ -123,6 +141,14 @@ export interface DashboardAnalytics {
     score: number;
     time: string;
   }>;
+}
+
+export interface DecisionFlow {
+  priority: string;
+  required_volunteers: number;
+  selection_reason: string;
+  ai_insight: string | null;
+  clean_volunteers: CleanVolunteerDecision[];
 }
 
 export interface HeatmapPoint {
@@ -195,6 +221,8 @@ export const tasksApi = {
 
   match: (id: number) => request<MatchResponse>(`/api/tasks/${id}/match`, { method: "POST" }),
 
+  decisionFlow: (id: number) => request<DecisionFlow>(`/api/tasks/${id}/decision-flow`),
+
   bulkCreate: (tasks: Array<{
     requester_id?: number;
     incident_type: string;
@@ -215,6 +243,9 @@ export const volunteersApi = {
   update: (id: number, data: { name?: string; phone?: string; lat?: number; lng?: number; availability?: boolean; status?: string }) =>
     request<User>(`/api/volunteers/${id}`, { method: "PUT", body: JSON.stringify(data) }),
 
+  updateLocation: (id: number, data: { lat: number; lng: number }) =>
+    request<User>(`/api/volunteers/${id}/location`, { method: "PUT", body: JSON.stringify(data) }),
+
   updateSkills: (id: number, skills: string[]) =>
     request<User>(`/api/volunteers/${id}/skills`, { method: "POST", body: JSON.stringify({ skills }) }),
 
@@ -231,6 +262,12 @@ export const volunteersApi = {
     const q = qs.toString();
     return request<User[]>(`/api/volunteers/search${q ? `?${q}` : ""}`);
   },
+};
+
+// â”€â”€ Users â”€â”€
+export const usersApi = {
+  updateLocation: (id: number, data: { lat: number; lng: number }) =>
+    request<User>(`/api/users/${id}/location`, { method: "PUT", body: JSON.stringify(data) }),
 };
 
 // ── Assignments ──
@@ -257,6 +294,7 @@ export const assignmentsApi = {
 // ── Analytics ──
 export const analyticsApi = {
   dashboard: () => request<DashboardAnalytics>("/api/analytics/dashboard"),
+  dashboardInsight: () => request<{ insight: string }>("/api/analytics/dashboard/insight"),
   heatmap: () => request<HeatmapPoint[]>("/api/analytics/heatmap"),
   volunteerPerformance: () => request<VolunteerPerformance[]>("/api/analytics/volunteer-performance"),
   skillDemand: () => request<SkillDemand[]>("/api/analytics/skill-demand"),

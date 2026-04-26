@@ -9,7 +9,6 @@ from . import config, mock_data, models, schemas
 from .database import Base, SessionLocal, engine, get_db
 from .routers import analytics, assignments, assignments_api, requests, tasks, users, volunteers
 from .routers.auth import router as auth_router
-from .services.assignment_engine import run_assignment
 from .services.state_manager import update_request_status
 
 
@@ -18,12 +17,10 @@ def seed_data():
     try:
         if config.USE_MOCK_DATA:
             mock_data.seed_simulation_dataset(db, models)
-            # Auto-assign DISASTER mode tasks
+            # Keep the simulation volunteer pool large for live demo tasks.
+            # Seed data already includes sample assignments.
             reqs = db.scalars(select(models.Request)).all()
             for request_obj in reqs:
-                if (request_obj.mode or "DISASTER").upper() == "DISASTER":
-                    if not request_obj.assignments:
-                        run_assignment(db, request_obj.id)
                 update_request_status(db, request_obj)
             db.commit()
             return
@@ -43,10 +40,10 @@ def seed_data():
             skills[name] = skill
 
         volunteers = [
-            ("Asha Patel", 12.973, 77.594, ["Medical", "Search and Rescue"]),
-            ("Rahul Menon", 12.968, 77.601, ["Swift Water Rescue", "Logistics"]),
-            ("Neha Singh", 12.976, 77.588, ["Electrical", "Firefighting"]),
-            ("David Roy", 12.971, 77.607, ["Medical", "Logistics"]),
+            ("Asha Patel", 17.392, 78.481, ["Medical", "Search and Rescue"]),
+            ("Rahul Menon", 17.369, 78.504, ["Swift Water Rescue", "Logistics"]),
+            ("Neha Singh", 17.431, 78.455, ["Electrical", "Firefighting"]),
+            ("David Roy", 17.405, 78.515, ["Medical", "Logistics"]),
         ]
         for name, lat, lng, skill_set in volunteers:
             volunteer = models.User(
@@ -56,8 +53,8 @@ def seed_data():
             volunteer.skills = [skills[item] for item in skill_set]
             db.add(volunteer)
 
-        requester = models.User(name="Field Officer", role="requester", lat=12.9716, lng=77.5946, availability=True)
-        admin = models.User(name="Command Admin", role="admin", lat=12.9716, lng=77.5946, availability=True)
+        requester = models.User(name="Field Officer", role="requester", lat=17.3850, lng=78.4867, availability=True)
+        admin = models.User(name="Command Admin", role="admin", lat=17.3850, lng=78.4867, availability=True)
         db.add_all([requester, admin])
         db.commit()
     finally:
@@ -86,6 +83,7 @@ def migrate_existing_database():
         add_column_if_missing("requests", "image_url", "TEXT")
         add_column_if_missing("requests", "image_verification_status", "VARCHAR(40) NOT NULL DEFAULT 'not_submitted'")
         add_column_if_missing("requests", "image_verification_reason", "TEXT")
+        add_column_if_missing("requests", "ai_insight", "TEXT")
         add_column_if_missing("requests", "severity_support_points", "INTEGER NOT NULL DEFAULT 0")
         add_column_if_missing("requests", "mode", "VARCHAR(20) NOT NULL DEFAULT 'DISASTER'")
         add_column_if_missing("users", "rating", "FLOAT NOT NULL DEFAULT 0")
@@ -116,6 +114,16 @@ app.add_middleware(
 @app.get("/")
 def health():
     return {"message": "SEVAK backend online", "mock_mode": config.USE_MOCK_DATA}
+
+
+@app.get("/dashboard/insight", response_model=schemas.DashboardInsightResponse)
+def root_dashboard_insight(db: Session = Depends(get_db)):
+    return analytics.dashboard_insight(db)
+
+
+@app.get("/request/{request_id}/decision-flow", response_model=schemas.DecisionFlowResponse)
+def root_decision_flow(request_id: int, db: Session = Depends(get_db)):
+    return tasks.decision_flow(request_id, db)
 
 
 # ── Legacy endpoints (backward compatible) ──

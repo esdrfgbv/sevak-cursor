@@ -1,20 +1,39 @@
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session, selectinload
 
 from .. import config, mock_data
 from ..models import Assignment, Request, User
-from .cluster_service import cluster_metrics_for_request, haversine_km
-from .priority_engine import allocation_count
+from .cluster_service import haversine_km
+from .gemini_service import ai_select_volunteers
 from .state_manager import update_request_status, update_volunteer_status
 
 
+MAX_AI_CANDIDATES = 25
+MAX_DISTANCE_KM = 50  # Hard limit: volunteers beyond this distance are excluded
+
+
+def calculate_required_volunteers(task: Request) -> int:
+    people_count = max(int(task.people_count or 0), 0)
+    mode = (task.mode or "DISASTER").upper()
+    if mode == "DISASTER":
+        base = max(5, people_count // 10)
+        if (task.priority_level or "").upper() == "CRITICAL" and people_count >= 100:
+            base += 5
+        return min(base, 25)
+    return max(1, people_count // 15)
+
+
 def _distance_score(distance_km: float) -> float:
+    if distance_km > MAX_DISTANCE_KM:
+        return 0.0  # Eliminate volunteers beyond 50km
     if distance_km < 2:
         return 1.0
     if distance_km < 5:
         return 0.7
     if distance_km < 10:
         return 0.4
+    if distance_km < 25:
+        return 0.2
     return 0.1
 
 
@@ -42,6 +61,41 @@ def _rating_score(volunteer: User) -> float:
     return min(r / 5.0, 1.0)
 
 
+def _fit_label(score: float) -> str:
+    if score >= 0.85:
+        return "High Match"
+    if score >= 0.7:
+        return "Strong Fit"
+    if score >= 0.5:
+        return "Good Fit"
+    return "Backup Fit"
+
+
+def _human_reason(mode: str, skill: float, distance_km: float, avail: float, rating: float, final_score: float) -> str:
+    signals = []
+    if skill >= 1:
+        signals.append("required skills covered")
+    elif skill > 0:
+        signals.append("partial skill match")
+    else:
+        signals.append("nearby backup responder")
+
+    if distance_km < 2:
+        signals.append("under 2 km away")
+    elif distance_km < 5:
+        signals.append("nearby")
+    else:
+        signals.append(f"{distance_km:.1f} km away")
+
+    if avail >= 1:
+        signals.append("available now")
+    if rating >= 0.9:
+        signals.append("high reliability")
+
+    prefix = "Rapid response fit" if mode == "DISASTER" else "Program fit"
+    return f"{_fit_label(final_score)}: {prefix} due to {', '.join(signals)}."
+
+
 def _score_volunteer(request_obj: Request, volunteer: User) -> tuple[float, str]:
     """Score using the spec formula:
     score = (0.4 * skill_match) + (0.25 * distance_score) + (0.2 * availability) + (0.15 * rating)
@@ -56,10 +110,7 @@ def _score_volunteer(request_obj: Request, volunteer: User) -> tuple[float, str]
     rating = _rating_score(volunteer)
 
     final_score = (skill * 0.4) + (dist * 0.25) + (avail * 0.2) + (rating * 0.15)
-    reason = (
-        f"skill={skill:.2f}, distance={distance_km:.1f}km ({dist:.2f}), "
-        f"availability={avail:.1f}, rating={rating:.2f}"
-    )
+    reason = _human_reason("STANDARD", skill, distance_km, avail, rating, final_score)
     return round(final_score, 3), reason
 
 
@@ -76,10 +127,7 @@ def _score_volunteer_disaster(request_obj: Request, volunteer: User) -> tuple[fl
 
     # Disaster: weight distance and availability higher
     final_score = (skill * 0.25) + (dist * 0.35) + (avail * 0.30) + (rating * 0.10)
-    reason = (
-        f"[DISASTER] skill={skill:.2f}, distance={distance_km:.1f}km ({dist:.2f}), "
-        f"availability={avail:.1f}, rating={rating:.2f}"
-    )
+    reason = _human_reason("DISASTER", skill, distance_km, avail, rating, final_score)
     return round(final_score, 3), reason
 
 
@@ -96,10 +144,7 @@ def _score_volunteer_ngo(request_obj: Request, volunteer: User) -> tuple[float, 
 
     # NGO: weight skill match and rating higher
     final_score = (skill * 0.45) + (dist * 0.15) + (avail * 0.15) + (rating * 0.25)
-    reason = (
-        f"[NGO] skill={skill:.2f}, distance={distance_km:.1f}km ({dist:.2f}), "
-        f"availability={avail:.1f}, rating={rating:.2f}"
-    )
+    reason = _human_reason("NGO", skill, distance_km, avail, rating, final_score)
     return round(final_score, 3), reason
 
 
@@ -110,21 +155,29 @@ def score_volunteer_for_request(request_obj: Request, volunteer: User) -> tuple[
     return _score_volunteer_disaster(request_obj, volunteer)
 
 
-def match_volunteers(db: Session, request_id: int, top_n: int = 3) -> list[dict]:
-    """Return top N volunteers with scores and justifications without assigning."""
-    request_obj = db.scalar(
-        select(Request)
-        .options(selectinload(Request.skills), selectinload(Request.assignments))
-        .where(Request.id == request_id)
-    )
-    if not request_obj:
-        raise ValueError("Task not found")
+def _candidate_payload(request_obj: Request, volunteer: User, score: float, reason: str) -> dict:
+    distance_km = haversine_km(request_obj.lat, request_obj.lng, volunteer.lat, volunteer.lng)
+    return {
+        "volunteer": volunteer,
+        "volunteer_id": volunteer.id,
+        "skills": [skill.name for skill in volunteer.skills],
+        "distance_km": round(distance_km, 2),
+        "availability": 100 if volunteer.availability and volunteer.status == "available" else 0,
+        "rating": round(float(volunteer.rating or 0.0), 2),
+        "workload": int(volunteer.workload or 0),
+        "score": score,
+        "justification": reason,
+    }
 
+
+def _available_volunteers(db: Session, request_obj: Request | None = None, excluded_volunteer_ids: set[int] | None = None) -> list[User]:
     volunteer_filters = [
         User.role == "volunteer",
         User.availability.is_(True),
         User.status == "available",
     ]
+    if excluded_volunteer_ids:
+        volunteer_filters.append(User.id.not_in(excluded_volunteer_ids))
     if config.USE_MOCK_DATA:
         pool = mock_data.get_assignable_volunteer_ids()
         if pool:
@@ -134,14 +187,109 @@ def match_volunteers(db: Session, request_id: int, top_n: int = 3) -> list[dict]
         select(User).options(selectinload(User.skills)).where(and_(*volunteer_filters))
     ).all()
 
+    # CRITICAL: Filter by distance - exclude volunteers beyond MAX_DISTANCE_KM
+    if request_obj:
+        filtered_volunteers = []
+        for v in volunteers:
+            distance_km = haversine_km(request_obj.lat, request_obj.lng, v.lat, v.lng)
+            if distance_km <= MAX_DISTANCE_KM:
+                filtered_volunteers.append(v)
+        return filtered_volunteers
+
+    return volunteers
+
+
+def get_top_candidates(
+    db: Session,
+    request_obj: Request,
+    *,
+    limit: int = MAX_AI_CANDIDATES,
+    excluded_volunteer_ids: set[int] | None = None,
+) -> list[dict]:
     ranked = []
-    for volunteer in volunteers:
+    for volunteer in _available_volunteers(db, request_obj, excluded_volunteer_ids):
         score, reason = score_volunteer_for_request(request_obj, volunteer)
         if score > 0:
-            ranked.append({"volunteer": volunteer, "score": score, "justification": reason})
+            ranked.append(_candidate_payload(request_obj, volunteer, score, reason))
 
     ranked.sort(key=lambda item: item["score"], reverse=True)
-    return ranked[:top_n]
+    
+    # Fail-safe: if no candidates within distance, return clear message
+    if not ranked:
+        return [{
+            "volunteer": None,
+            "volunteer_id": None,
+            "skills": [],
+            "distance_km": 0,
+            "availability": 0,
+            "rating": 0,
+            "workload": 0,
+            "score": 0,
+            "justification": f"No nearby volunteers available within {MAX_DISTANCE_KM}km radius",
+        }]
+    
+    return ranked[:limit]
+
+
+def _fallback_ai_result(request_obj: Request, candidates: list[dict], required_count: int) -> dict:
+    selected = [
+        {
+            "volunteer_id": item["volunteer_id"],
+            "score": round(float(item["score"]) * 100, 1),
+            "reason": item["justification"],
+        }
+        for item in candidates[:required_count]
+    ]
+    mode = (request_obj.mode or "DISASTER").upper()
+    if mode == "DISASTER":
+        severity = (request_obj.priority_level or "").lower()
+        insight = (
+            f"Assigned {len(selected)} volunteers due to high population impact "
+            f"and {severity or 'emergency'} severity."
+        )
+    else:
+        insight = f"Selected {len(selected)} volunteers using skill fit, rating, and availability."
+    return {"selected": selected, "insight": insight}
+
+
+def _select_with_ai(request_obj: Request, candidates: list[dict], required_count: int) -> dict:
+    bounded_count = min(required_count, len(candidates))
+    if bounded_count <= 0:
+        return {"selected": [], "insight": "No available volunteers matched this task."}
+    ai_result = ai_select_volunteers(request_obj, candidates, bounded_count)
+    if ai_result:
+        return ai_result
+    return _fallback_ai_result(request_obj, candidates, bounded_count)
+
+
+def match_volunteers(db: Session, request_id: int, top_n: int | None = None) -> list[dict]:
+    """Return selected volunteers with AI/fallback reasons without assigning."""
+    request_obj = db.scalar(
+        select(Request)
+        .options(selectinload(Request.skills), selectinload(Request.assignments))
+        .where(Request.id == request_id)
+    )
+    if not request_obj:
+        raise ValueError("Task not found")
+
+    required_count = top_n or calculate_required_volunteers(request_obj)
+    candidates = get_top_candidates(db, request_obj)
+    ai_result = _select_with_ai(request_obj, candidates, required_count)
+    request_obj.ai_insight = ai_result["insight"]
+    db.add(request_obj)
+    candidates_by_id = {item["volunteer_id"]: item for item in candidates}
+
+    matched = []
+    for item in ai_result["selected"]:
+        candidate = candidates_by_id.get(int(item["volunteer_id"]))
+        if not candidate:
+            continue
+        matched.append({
+            "volunteer": candidate["volunteer"],
+            "score": round(float(item.get("score", 0)) / 100, 3),
+            "justification": str(item.get("reason") or candidate["justification"]),
+        })
+    return matched
 
 
 def run_assignment(db: Session, request_id: int, excluded_volunteer_ids: set[int] | None = None) -> list[Assignment]:
@@ -159,44 +307,47 @@ def run_assignment(db: Session, request_id: int, excluded_volunteer_ids: set[int
     if mode == "NGO":
         return []
 
-    volunteer_filters = [
-        User.role == "volunteer",
-        User.availability.is_(True),
-        User.status == "available",
-    ]
-    if excluded_volunteer_ids:
-        volunteer_filters.append(User.id.not_in(excluded_volunteer_ids))
-
-    if config.USE_MOCK_DATA:
-        pool = mock_data.get_assignable_volunteer_ids()
-        if pool:
-            volunteer_filters.append(User.id.in_(pool))
-
-    volunteers = db.scalars(select(User).options(selectinload(User.skills)).where(and_(*volunteer_filters))).all()
-
-    ranked = []
-    for volunteer in volunteers:
-        score, reason = score_volunteer_for_request(request_obj, volunteer)
-        if score > 0:
-            ranked.append((score, reason, volunteer))
-
-    ranked.sort(key=lambda item: item[0], reverse=True)
-    _, cluster_size = cluster_metrics_for_request(db, request_obj.lat, request_obj.lng)
-    target_count = allocation_count(request_obj.priority_level, request_obj.people_count, cluster_size)
-    created: list[Assignment] = []
+    candidates = get_top_candidates(
+        db,
+        request_obj,
+        excluded_volunteer_ids=excluded_volunteer_ids,
+    )
+    required_count = calculate_required_volunteers(request_obj)
     used_ids = {assignment.volunteer_id for assignment in request_obj.assignments}
+    remaining_count = max(required_count - len(used_ids), 0)
+    print(
+        "[SEVAK DEBUG] ASSIGNMENT_INPUT "
+        f"request_id={request_obj.id} people_count={request_obj.people_count} "
+        f"priority={request_obj.priority_level} required={required_count} "
+        f"existing={len(used_ids)} remaining={remaining_count} candidates={len(candidates)}"
+    )
+    if remaining_count == 0:
+        request_obj.ai_insight = request_obj.ai_insight or f"Required volunteer count is already met with {len(used_ids)} assignments."
+        db.add(request_obj)
+        update_request_status(db, request_obj)
+        db.flush()
+        return []
 
-    for score, reason, volunteer in ranked:
-        if len(created) >= target_count:
-            break
+    ai_result = _select_with_ai(request_obj, candidates, remaining_count)
+    request_obj.ai_insight = ai_result["insight"]
+    candidates_by_id = {item["volunteer_id"]: item for item in candidates}
+    created: list[Assignment] = []
+
+    for selection in ai_result["selected"]:
+        candidate = candidates_by_id.get(int(selection["volunteer_id"]))
+        if not candidate:
+            continue
+        volunteer = candidate["volunteer"]
         if volunteer.id in used_ids:
             continue
+        score = round(float(selection.get("score", 0)) / 100, 3)
+        reason = str(selection.get("reason") or candidate["justification"])
         assignment = Assignment(
             request_id=request_obj.id,
             volunteer_id=volunteer.id,
             score=score,
             status="accepted",
-            reason=f"{reason}; auto-assigned",
+            reason=reason,
         )
         update_volunteer_status(volunteer, "assigned", availability=False)
         db.add(assignment)
@@ -204,6 +355,7 @@ def run_assignment(db: Session, request_id: int, excluded_volunteer_ids: set[int
         created.append(assignment)
         used_ids.add(volunteer.id)
 
+    db.add(request_obj)
     update_request_status(db, request_obj)
     db.flush()
     return created

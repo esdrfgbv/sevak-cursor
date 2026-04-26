@@ -89,6 +89,24 @@ def update_volunteer(volunteer_id: int, payload: schemas.VolunteerUpdate, db: Se
     return volunteer
 
 
+@router.put("/{volunteer_id}/location", response_model=schemas.UserRead)
+def update_volunteer_location(volunteer_id: int, payload: schemas.VolunteerLocationUpdate, db: Session = Depends(get_db)):
+    volunteer = db.scalar(
+        select(models.User)
+        .options(selectinload(models.User.skills))
+        .where(models.User.id == volunteer_id, models.User.role == "volunteer")
+    )
+    if not volunteer:
+        raise HTTPException(status_code=404, detail="Volunteer not found")
+
+    volunteer.lat = payload.lat
+    volunteer.lng = payload.lng
+    db.add(volunteer)
+    db.commit()
+    db.refresh(volunteer)
+    return volunteer
+
+
 @router.post("/{volunteer_id}/skills", response_model=schemas.UserRead)
 def update_volunteer_skills(volunteer_id: int, payload: schemas.VolunteerSkillsUpdate, db: Session = Depends(get_db)):
     volunteer = db.scalar(

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 # ── Skill ──
@@ -65,7 +65,10 @@ class RequestCreate(BaseModel):
     title: str
     description: str
     required_skills: List[str] = Field(default_factory=list)
-    people_count: int = 0
+    people_count: int = Field(
+        default=0,
+        validation_alias=AliasChoices("people_count", "peopleCount", "peopleAffected"),
+    )
     lat: float
     lng: float
     mode: str = "DISASTER"
@@ -89,12 +92,14 @@ class RequestRead(BaseModel):
     status: str
     priority_score: int
     priority_level: str
+    priority_explanation: Optional[str] = None
     cluster_boost: int
     severity_support_points: int = 0
     supporter_count: int = 0
     image_url: Optional[str] = None
     image_verification_status: str = "not_submitted"
     image_verification_reason: Optional[str] = None
+    ai_insight: Optional[str] = None
     created_at: datetime
     skills: List[SkillRead] = []
     model_config = {"from_attributes": True}
@@ -114,11 +119,21 @@ class AssignmentRead(BaseModel):
     request_id: int
     volunteer_id: int
     score: float
+    match_label: Optional[str] = None
     status: str
     reason: str
     created_at: datetime
     volunteer: Optional[UserRead] = None
     model_config = {"from_attributes": True}
+
+
+class CleanVolunteerDecision(BaseModel):
+    id: int
+    name: str
+    fit: str
+    reason: str
+    distance: str
+    tag: str
 
 
 class RequestDetail(RequestRead):
@@ -194,6 +209,7 @@ class RatingRead(BaseModel):
 class MatchResult(BaseModel):
     volunteer: UserRead
     score: float
+    match_label: Optional[str] = None
     justification: str
 
 
@@ -201,7 +217,20 @@ class MatchResponse(BaseModel):
     task_id: int
     mode: str
     top_volunteers: List[MatchResult]
+    clean_volunteers: List[CleanVolunteerDecision] = []
     auto_assigned: bool = False
+
+
+class DashboardInsightResponse(BaseModel):
+    insight: str
+
+
+class DecisionFlowResponse(BaseModel):
+    priority: str
+    required_volunteers: int
+    selection_reason: str
+    ai_insight: Optional[str] = None
+    clean_volunteers: List[CleanVolunteerDecision] = []
 
 
 # ── Admin ──
@@ -226,6 +255,7 @@ class DashboardAnalytics(BaseModel):
     tasks_by_status: dict
     tasks_by_priority: dict
     tasks_by_mode: dict
+    ai_insight: str
     recent_activity: List[dict]
 
 
@@ -263,8 +293,11 @@ class ImageVerificationSummary(BaseModel):
 
 class RequestCreateResponse(BaseModel):
     request: RequestDetail
+    ai_insight: Optional[str] = None
+    priority_explanation: Optional[str] = None
     assigned_count: int
     suggested_volunteers: List[AssignmentRead]
+    clean_volunteers: List[CleanVolunteerDecision] = []
     duplicate_detected: bool = False
     duplicate_points_added: int = 0
     duplicate_request: Optional[RequestDetail] = None

@@ -2,21 +2,11 @@ import { useState, useEffect } from "react";
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { X, MapPin, Clock, Users, Star, Zap, Filter, Search, Loader2 } from "lucide-react";
+import { X, MapPin, Clock, Users, Star, Zap, Filter, Search, Loader2, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { tasksApi, type Task } from "@/lib/api";
+import { tasksApi, type DecisionFlow, type Task } from "@/lib/api";
 import { toast } from "sonner";
-
-function MatchScore({ score }: { score: number }) {
-  return (
-    <div className="flex items-center gap-2 min-w-[100px]">
-      <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-        <div className="h-full bg-gradient-to-r from-primary to-primary-glow" style={{ width: `${score}%` }} />
-      </div>
-      <span className="text-xs font-semibold tabular-nums">{score}%</span>
-    </div>
-  );
-}
+import { assignmentLabel, matchTags, priorityReason } from "@/lib/decision-labels";
 
 const priorityColor: Record<string, string> = {
   CRITICAL: "bg-danger/10 text-danger ring-danger/30",
@@ -34,6 +24,7 @@ const Tasks = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Task | null>(null);
+  const [decisionFlow, setDecisionFlow] = useState<DecisionFlow | null>(null);
   const [filter, setFilter] = useState("All");
   const [modeFilter, setModeFilter] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
@@ -54,6 +45,16 @@ const Tasks = () => {
     const interval = setInterval(fetchTasks, 10000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (!selected?.id) {
+      setDecisionFlow(null);
+      return;
+    }
+    tasksApi.decisionFlow(selected.id)
+      .then(setDecisionFlow)
+      .catch(() => setDecisionFlow(null));
+  }, [selected?.id]);
 
   const handleMatch = async (taskId: number) => {
     try {
@@ -139,7 +140,7 @@ const Tasks = () => {
                   <th className="text-left font-medium py-2.5 px-2 hidden md:table-cell">Mode</th>
                   <th className="text-left font-medium py-2.5 px-2 hidden lg:table-cell">Status</th>
                   <th className="text-left font-medium py-2.5 px-2 w-32">Assigned</th>
-                  <th className="text-left font-medium py-2.5 px-6 hidden md:table-cell w-24">Score</th>
+                  <th className="text-left font-medium py-2.5 px-6 hidden md:table-cell">Decision</th>
                 </tr>
               </thead>
               <tbody>
@@ -175,7 +176,11 @@ const Tasks = () => {
                         <span className="text-xs font-medium tabular-nums">{t.assignments.length}</span>
                       </div>
                     </td>
-                    <td className="py-3 px-6 text-muted-foreground hidden md:table-cell tabular-nums">{t.priority_score}</td>
+                    <td className="py-3 px-6 text-muted-foreground hidden md:table-cell max-w-[260px]">
+                      <div className="text-xs line-clamp-2">
+                        {t.assignments[0]?.reason || t.ai_insight || "Awaiting match decision"}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -202,6 +207,37 @@ const Tasks = () => {
 
             <div className="px-5 py-3 text-sm text-muted-foreground border-b border-border">{selected.description}</div>
 
+            {selected.ai_insight && (
+              <div className="px-5 py-3 border-b border-border bg-primary/[0.03]">
+                <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-primary mb-1.5">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  AI Decision Insight
+                </div>
+                <p className="text-sm text-foreground leading-relaxed">{selected.ai_insight}</p>
+              </div>
+            )}
+
+            <div className="px-5 py-4 border-b border-border bg-muted/25">
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground mb-3">
+                <Sparkles className="h-3.5 w-3.5 text-primary" />
+                Decision Flow
+              </div>
+              <ol className="space-y-2 text-sm">
+                <li className="flex gap-2">
+                  <span className="text-primary font-semibold">1</span>
+                  <span>{decisionFlow?.priority || priorityReason(selected)}</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="text-primary font-semibold">2</span>
+                  <span>{decisionFlow?.required_volunteers ?? selected.assignments.length} volunteers needed</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="text-primary font-semibold">3</span>
+                  <span>{decisionFlow?.selection_reason || "Proximity + skill + availability"}</span>
+                </li>
+              </ol>
+            </div>
+
             <div className="px-5 py-4 grid grid-cols-3 gap-3 border-b border-border text-xs">
               <div>
                 <div className="text-muted-foreground text-[10px] uppercase tracking-wider mb-1">Type</div>
@@ -212,8 +248,8 @@ const Tasks = () => {
                 <div className="font-medium">{selected.people_count}</div>
               </div>
               <div>
-                <div className="text-muted-foreground text-[10px] uppercase tracking-wider mb-1">Score</div>
-                <div className="font-medium tabular-nums">{selected.priority_score}/100</div>
+                <div className="text-muted-foreground text-[10px] uppercase tracking-wider mb-1">Mode Logic</div>
+                <div className="font-medium leading-snug">{selected.mode === "DISASTER" ? "Auto Assigned" : "Manual Acceptance"}</div>
               </div>
             </div>
 
@@ -246,6 +282,7 @@ const Tasks = () => {
                           <div className="flex items-center gap-2">
                             <span className="font-medium text-sm">{a.volunteer?.name || `Vol #${a.volunteer_id}`}</span>
                             {i === 0 && <span className="text-[9px] font-semibold uppercase tracking-wider text-primary bg-primary/10 px-1.5 py-0.5 rounded">Top</span>}
+                            <span className="text-[9px] font-semibold uppercase tracking-wider bg-secondary px-1.5 py-0.5 rounded">{assignmentLabel(a)}</span>
                           </div>
                           <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-0.5">
                             <span className="flex items-center gap-0.5"><Star className="h-3 w-3 fill-warning text-warning" />{a.volunteer?.rating?.toFixed(1) || 'N/A'}</span>
@@ -255,10 +292,13 @@ const Tasks = () => {
                         </div>
                       </div>
                       <div className="mt-2">
-                        <div className="flex justify-between text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
-                          <span>Match score</span><span className="text-foreground font-semibold tabular-nums">{(a.score * 100).toFixed(0)}%</span>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Decision Reason</div>
+                        <p className="text-xs leading-relaxed text-foreground">{a.reason}</p>
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {matchTags(a.score, a.reason).map(tag => (
+                            <Badge key={tag} variant="outline" className="text-[10px] h-4">{tag}</Badge>
+                          ))}
                         </div>
-                        <MatchScore score={Math.round(a.score * 100)} />
                       </div>
                     </div>
                   ))

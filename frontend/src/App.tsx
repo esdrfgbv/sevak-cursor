@@ -44,7 +44,7 @@ function AppRoutes() {
       <Route path="/volunteers" element={<ProtectedRoute allowedRoles={["admin"]}><Volunteers /></ProtectedRoute>} />
       <Route path="/map" element={<ProtectedRoute allowedRoles={["admin"]}><MapView /></ProtectedRoute>} />
       <Route path="/analytics" element={<ProtectedRoute allowedRoles={["admin"]}><Analytics /></ProtectedRoute>} />
-      <Route path="/request" element={<ProtectedRoute allowedRoles={["requester"]}><RequesterDashboard /></ProtectedRoute>} />
+      <Route path="/request" element={<ProtectedRoute allowedRoles={["requester", "admin"]}><RequesterDashboard /></ProtectedRoute>} />
       <Route path="/volunteer" element={<ProtectedRoute allowedRoles={["volunteer"]}><VolunteerDashboard /></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />
     </Routes>

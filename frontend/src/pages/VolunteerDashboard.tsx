@@ -17,6 +17,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { volunteersApi, assignmentsApi, type User, type Assignment } from '@/lib/api';
+import { assignmentLabel, matchTags } from '@/lib/decision-labels';
 
 export default function VolunteerDashboard() {
   const { user, logout } = useAuth();
@@ -186,8 +187,7 @@ export default function VolunteerDashboard() {
                         </div>
                       </div>
                       <div className="text-right flex-shrink-0">
-                        <div className="text-2xl font-bold text-primary">{(assignment.score * 100).toFixed(0)}%</div>
-                        <div className="text-[10px] text-muted-foreground">match</div>
+                        <Badge variant="secondary" className="text-[10px]">{assignmentLabel(assignment)}</Badge>
                       </div>
                     </div>
 
@@ -225,7 +225,7 @@ export default function VolunteerDashboard() {
                         <h3 className="font-medium text-sm line-clamp-1">Task #{assignment.request_id}</h3>
                       </div>
                       <div className="text-right flex-shrink-0 ml-4">
-                        <div className="text-lg font-bold text-success">{(assignment.score * 100).toFixed(0)}%</div>
+                        <Badge variant="secondary" className="text-[10px]">{assignmentLabel(assignment)}</Badge>
                       </div>
                     </div>
                   </CardContent>
@@ -320,10 +320,11 @@ export default function VolunteerDashboard() {
                 <p className="text-sm">{selectedAssignment.reason}</p>
               </div>
               <div>
-                <p className="text-xs text-muted-foreground mb-1">Match Score</p>
-                <div className="flex items-center gap-2">
-                  <Progress value={selectedAssignment.score * 100} className="flex-1" />
-                  <span className="text-sm font-semibold">{(selectedAssignment.score * 100).toFixed(0)}%</span>
+                <p className="text-xs text-muted-foreground mb-1">AI Match Signals</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {matchTags(selectedAssignment.score, selectedAssignment.reason).map(tag => (
+                    <Badge key={tag} variant="secondary" className="text-[10px]">{tag}</Badge>
+                  ))}
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">

@@ -47,6 +47,28 @@ def calculate_priority(description: str, people_count: int, required_skills: lis
     return total, "LOW"
 
 
+def explain_priority(description: str, people_count: int, required_skills: list[str], cluster_boost: int = 0) -> str:
+    text = (description or "").lower()
+    keyword_hits = [keyword.title() for keyword in CRITICAL_KEYWORDS if keyword in text]
+    skill_hits = [skill for skill in required_skills if skill and skill.strip()]
+    people = max(int(people_count or 0), 0)
+
+    signals: list[str] = []
+    if keyword_hits:
+        signals.append(" + ".join(keyword_hits[:3]))
+    if people:
+        signals.append(f"{people} people affected")
+    if skill_hits:
+        signals.append(" + ".join(skill_hits[:3]))
+    if cluster_boost:
+        signals.append("nearby incident cluster")
+
+    score, level = calculate_priority(description, people, required_skills, cluster_boost)
+    if not signals:
+        return f"Baseline incident details -> {level.title()} priority"
+    return f"{' + '.join(signals)} -> {level.title()} priority"
+
+
 def allocation_count(priority_level: str, people_count: int, cluster_size: int) -> int:
     """
     Dynamic responder counts:

@@ -6,7 +6,7 @@ Generates:
 - 50 tasks (mix of DISASTER and NGO, different priorities)
 - 20 assignments
 
-All coordinates are within 10km of Bangalore central (12.9716, 77.5946).
+All coordinates are within 50km of Hyderabad central (17.3850, 78.4867).
 """
 from __future__ import annotations
 
@@ -16,9 +16,9 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
-CENTER_LAT = 12.9716
-CENTER_LNG = 77.5946
-RADIUS_KM = 10.0
+CENTER_LAT = 17.3850
+CENTER_LNG = 78.4867
+RADIUS_KM = 20.0  # Reduced to 20km for realistic local assignments
 
 FIRST_NAMES = [
     "Aarav", "Aditi", "Ananya", "Arjun", "Deepa", "Dhruv", "Farah", "Gautham",
@@ -130,7 +130,10 @@ def seed_simulation_dataset(db, models) -> None:
     volunteers = []
     for i in range(100):
         lat, lng = random_point_within_radius_km(rng, CENTER_LAT, CENTER_LNG, RADIUS_KM)
-        status, availability = _pick_volunteer_status(rng)
+        if i < 60:
+            status, availability = "available", True
+        else:
+            status, availability = _pick_volunteer_status(rng)
         fname = rng.choice(FIRST_NAMES)
         lname = rng.choice(LAST_NAMES)
         rating = round(rng.uniform(2.5, 5.0), 2)

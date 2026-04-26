@@ -14,6 +14,8 @@ const Index = () => {
   const navigate = useNavigate();
   const [analytics, setAnalytics] = useState<DashboardAnalytics | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [insight, setInsight] = useState("");
+  const [creatingTask, setCreatingTask] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const fetchData = async () => {
@@ -24,6 +26,7 @@ const Index = () => {
       ]);
       setAnalytics(dashData);
       setTasks(taskData);
+      setInsight(dashData.ai_insight);
     } catch (err) {
       console.error("Failed to fetch dashboard data:", err);
     } finally {
@@ -49,6 +52,29 @@ const Index = () => {
       }
     } else {
       toast.info("No pending DISASTER tasks");
+    }
+  };
+
+  const handleCreateTask = async () => {
+    setCreatingTask(true);
+    try {
+      await tasksApi.create({
+        incident_type: "Medical Emergency",
+        title: "Urgent medical support needed",
+        description: "Medical emergency with injured people, urgent first aid and logistics support needed for 12 people.",
+        required_skills: ["Medical", "First Aid", "Logistics"],
+        people_count: 12,
+        lat: 17.3850 + (Math.random() - 0.5) * 0.06,
+        lng: 78.4867 + (Math.random() - 0.5) * 0.06,
+        mode: "DISASTER",
+        image_data: null,
+      });
+      await fetchData();
+      toast.success("New task created and AI dispatch evaluated");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Task creation failed");
+    } finally {
+      setCreatingTask(false);
     }
   };
 
@@ -82,6 +108,27 @@ const Index = () => {
   return (
     <AppShell title="Command Center" subtitle={`${analytics?.critical_tasks || 0} 🔴 • ${analytics?.available_volunteers || 0} 🟢 • ${analytics?.completion_rate || 0}% ✓`}>
       <div className="p-6 space-y-6">
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+          <div className="xl:col-span-2 bg-card border border-border rounded-xl p-5 shadow-elegant">
+            <div className="flex items-center gap-2 text-[11px] font-semibold tracking-wider uppercase text-muted-foreground">
+              <Activity className="h-3.5 w-3.5" />
+              Live Operations
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <span className="px-2 py-1 rounded-md bg-danger/10 text-danger text-xs font-medium">{analytics?.critical_tasks || 0} critical</span>
+              <span className="px-2 py-1 rounded-md bg-success/10 text-success text-xs font-medium">{analytics?.available_volunteers || 0} available</span>
+              <span className="px-2 py-1 rounded-md bg-primary/10 text-primary text-xs font-medium">{analytics?.active_tasks || 0} active tasks</span>
+              <span className="px-2 py-1 rounded-md bg-warning/10 text-warning text-xs font-medium">{analytics?.disaster_tasks || 0} auto-dispatch</span>
+            </div>
+          </div>
+          <div className="bg-primary/10 border border-primary/30 rounded-xl p-5 shadow-elegant">
+            <div className="flex items-center gap-2 text-[11px] font-semibold tracking-wider uppercase text-primary">
+              <Sparkles className="h-3.5 w-3.5" />
+              AI Decision Insight
+            </div>
+            <p className="mt-2 text-sm leading-relaxed">{insight || analytics?.ai_insight}</p>
+          </div>
+        </div>
         {/* KPIs - All Clickable */}
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           <div 
@@ -168,7 +215,9 @@ const Index = () => {
                           {t.mode}
                         </span>
                       </div>
-                      <div className="text-xs text-muted-foreground truncate">{t.incident_type}</div>
+                      <div className="text-xs text-muted-foreground truncate">
+                        {t.ai_insight || t.assignments[0]?.reason || t.incident_type}
+                      </div>
                     </div>
                     <div className="hidden md:flex items-center gap-1.5">
                       <Users className="h-3.5 w-3.5 text-muted-foreground" />
@@ -191,10 +240,11 @@ const Index = () => {
               </div>
               <div className="mt-4 space-y-2">
                 <Button 
-                  onClick={() => navigate('/request')}
+                  onClick={handleCreateTask}
                   className="w-full justify-center bg-white/20 hover:bg-white/30 text-white border border-white/30"
                   variant="outline"
                   size="sm"
+                  disabled={creatingTask}
                 >
                   ➕ New Task
                 </Button>

@@ -11,6 +11,8 @@ CREATE TABLE users (
     availability BOOLEAN DEFAULT TRUE,
     status VARCHAR(30) NOT NULL DEFAULT 'available',
     phone VARCHAR(30),
+    rating FLOAT NOT NULL DEFAULT 0,
+    workload INT NOT NULL DEFAULT 0,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -25,6 +27,7 @@ CREATE TABLE requests (
     incident_type VARCHAR(80) NOT NULL,
     title VARCHAR(160) NOT NULL,
     description TEXT NOT NULL,
+    mode VARCHAR(20) NOT NULL DEFAULT 'DISASTER',
     lat FLOAT NOT NULL,
     lng FLOAT NOT NULL,
     people_count INT NOT NULL DEFAULT 0,
@@ -36,6 +39,7 @@ CREATE TABLE requests (
     image_url TEXT,
     image_verification_status VARCHAR(30) NOT NULL DEFAULT 'not_submitted',
     image_verification_reason TEXT,
+    ai_insight TEXT,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (requester_id) REFERENCES users(id) ON DELETE SET NULL
 );

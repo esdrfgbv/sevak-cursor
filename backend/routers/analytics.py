@@ -8,8 +8,39 @@ from sqlalchemy.orm import Session, selectinload
 
 from .. import models, schemas
 from ..database import get_db
+from ..services.gemini_service import generate_dashboard_insight
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
+
+
+def _insight_snapshot(db: Session) -> dict:
+    total_volunteers = db.scalar(
+        select(func.count(models.User.id)).where(models.User.role == "volunteer")
+    ) or 0
+    available_volunteers = db.scalar(
+        select(func.count(models.User.id)).where(
+            models.User.role == "volunteer", models.User.availability == True
+        )
+    ) or 0
+    active_tasks = db.scalar(
+        select(func.count(models.Request.id)).where(models.Request.status != "completed")
+    ) or 0
+    critical_tasks = db.scalar(
+        select(func.count(models.Request.id)).where(
+            models.Request.priority_level.in_(["HIGH", "CRITICAL"])
+        )
+    ) or 0
+    return {
+        "active_tasks": active_tasks,
+        "critical_tasks": critical_tasks,
+        "available_volunteers": available_volunteers,
+        "total_volunteers": total_volunteers,
+    }
+
+
+@router.get("/dashboard/insight", response_model=schemas.DashboardInsightResponse)
+def dashboard_insight(db: Session = Depends(get_db)):
+    return {"insight": generate_dashboard_insight(_insight_snapshot(db))}
 
 
 @router.get("/dashboard", response_model=schemas.DashboardAnalytics)
@@ -87,6 +118,16 @@ def dashboard_analytics(db: Session = Depends(get_db)):
             "time": a.created_at.isoformat() if a.created_at else "",
         })
 
+    insight_snapshot = {
+        "active_tasks": active_tasks,
+        "critical_tasks": critical_tasks,
+        "available_volunteers": available_volunteers,
+        "total_volunteers": total_volunteers,
+        "completion_rate": round(completion_rate, 1),
+        "tasks_by_priority": tasks_by_priority,
+        "tasks_by_mode": tasks_by_mode,
+    }
+
     return schemas.DashboardAnalytics(
         total_tasks=total_tasks,
         active_tasks=active_tasks,
@@ -101,6 +142,7 @@ def dashboard_analytics(db: Session = Depends(get_db)):
         tasks_by_status=tasks_by_status,
         tasks_by_priority=tasks_by_priority,
         tasks_by_mode=tasks_by_mode,
+        ai_insight=generate_dashboard_insight(insight_snapshot),
         recent_activity=recent_activity,
     )
 

@@ -88,6 +88,19 @@ def update_requester_location(requester_id: int, payload: schemas.VolunteerLocat
     return requester
 
 
+@router.put("/api/users/{user_id}/location", response_model=schemas.UserRead)
+def update_user_location(user_id: int, payload: schemas.VolunteerLocationUpdate, db: Session = Depends(get_db)):
+    user = db.scalar(select(models.User).options(selectinload(models.User.skills)).where(models.User.id == user_id))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.lat = payload.lat
+    user.lng = payload.lng
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 @router.get("/volunteer/{volunteer_id}/nearby-requests", response_model=list[schemas.NearbyRequestRead])
 def nearby_requests_for_volunteer(volunteer_id: int, radius_km: float = 10, db: Session = Depends(get_db)):
     volunteer = db.scalar(select(models.User).where(models.User.id == volunteer_id, models.User.role == "volunteer"))

@@ -1,261 +1,266 @@
-import { useMemo, useState } from "react";
-import { tasks, volunteers, type Priority } from "@/lib/mock-data";
+import { useEffect, useMemo, useState } from "react";
+import {
+  CircleF,
+  GoogleMap,
+  InfoWindowF,
+  LoadScript,
+  MarkerClustererF,
+  MarkerF,
+  PolylineF,
+} from "@react-google-maps/api";
+import { AlertTriangle, Layers, LocateFixed, Navigation, Users, Zap } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { tasksApi, volunteersApi, type Task, type User } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
-import { Layers, Navigation, Users, Zap } from "lucide-react";
+import { priorityReason } from "@/lib/decision-labels";
 
-interface MapState {
-  mapType: "roadmap" | "satellite" | "terrain";
-  showClusters: boolean;
-  showRoutes: boolean;
-  showHeatmap: boolean;
-}
+const HYDERABAD_CENTER = { lat: 17.3850, lng: 78.4867 };
+const PRIMARY_ZONE_RADIUS_METERS = 50000;
 
-const priorityTone: Record<Priority, string> = {
-  critical: "bg-danger ring-danger/30",
-  high: "bg-orange-500 ring-orange-500/30",
-  medium: "bg-yellow-500 ring-yellow-500/30",
-  low: "bg-emerald-500 ring-emerald-500/30",
+const mapOptions: google.maps.MapOptions = {
+  disableDefaultUI: true,
+  zoomControl: true,
+  streetViewControl: false,
+  mapTypeControl: false,
+  fullscreenControl: true,
 };
 
-const priorityGlow: Record<Priority, string> = {
-  critical: "rgba(220,38,38,.30)",
-  high: "rgba(249,115,22,.26)",
-  medium: "rgba(234,179,8,.24)",
-  low: "rgba(16,185,129,.22)",
+const priorityIcon: Record<string, string> = {
+  CRITICAL: "http://maps.google.com/mapfiles/ms/icons/red-dot.png",
+  HIGH: "http://maps.google.com/mapfiles/ms/icons/orange-dot.png",
+  MEDIUM: "http://maps.google.com/mapfiles/ms/icons/yellow-dot.png",
+  LOW: "http://maps.google.com/mapfiles/ms/icons/green-dot.png",
 };
 
-const mapTypeClass: Record<MapState["mapType"], string> = {
-  roadmap: "bg-[#eef4f8]",
-  satellite: "bg-[#22352f]",
-  terrain: "bg-[#edf2df]",
+const priorityColor: Record<string, string> = {
+  CRITICAL: "#dc2626",
+  HIGH: "#f97316",
+  MEDIUM: "#eab308",
+  LOW: "#22c55e",
 };
 
-const districtLabels = [
-  { name: "Riverside", x: 28, y: 47 },
-  { name: "Northbank", x: 58, y: 22 },
-  { name: "Old Town", x: 20, y: 76 },
-  { name: "Civic Center", x: 47, y: 57 },
-  { name: "Westside", x: 14, y: 33 },
-];
+type MapType = "roadmap" | "satellite" | "hybrid" | "terrain";
 
 export function GoogleMapsComponent({ height = "h-[640px]" }: { height?: string }) {
-  const [selectedTaskId, setSelectedTaskId] = useState(tasks[0]?.id);
-  const [mapState, setMapState] = useState<MapState>({
-    mapType: "roadmap",
-    showClusters: false,
-    showRoutes: false,
-    showHeatmap: true,
-  });
+  const { user, refreshLocation } = useAuth();
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [volunteers, setVolunteers] = useState<User[]>([]);
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [mapType, setMapType] = useState<MapType>("roadmap");
+  const [showClusters, setShowClusters] = useState(true);
+  const [showRoutes, setShowRoutes] = useState(false);
+  const [showZone, setShowZone] = useState(true);
 
-  const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? tasks[0];
+  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 
-  const clusterGroups = useMemo(
-    () => [
-      { id: "west", x: 22, y: 52, count: tasks.filter((task) => task.coords.x < 35).length, tone: "bg-danger" },
-      { id: "central", x: 48, y: 45, count: tasks.filter((task) => task.coords.x >= 35 && task.coords.x < 60).length, tone: "bg-primary" },
-      { id: "east", x: 67, y: 48, count: tasks.filter((task) => task.coords.x >= 60).length, tone: "bg-warning" },
-    ].filter((cluster) => cluster.count > 0),
-    []
-  );
+  const center = useMemo(() => {
+    if (user?.lat && user?.lng) return { lat: user.lat, lng: user.lng };
+    if (tasks[0]) return { lat: tasks[0].lat, lng: tasks[0].lng };
+    return HYDERABAD_CENTER;
+  }, [tasks, user?.lat, user?.lng]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchMapData = async () => {
+      try {
+        const [taskData, volunteerData] = await Promise.all([
+          tasksApi.list(),
+          volunteersApi.search({ lat: center.lat, lng: center.lng, radius_km: 50 }),
+        ]);
+
+        if (isMounted) {
+          setTasks(taskData);
+          setVolunteers(volunteerData);
+          setSelectedTask((current) => current ?? taskData[0] ?? null);
+        }
+      } catch (error) {
+        console.error("Failed to load map data:", error);
+      }
+    };
+
+    fetchMapData();
+    const interval = window.setInterval(fetchMapData, 10000);
+    return () => {
+      isMounted = false;
+      window.clearInterval(interval);
+    };
+  }, [center.lat, center.lng]);
+
+  const routeLines = useMemo(() => {
+    if (!showRoutes || tasks.length === 0) return [];
+
+    return volunteers.slice(0, 12).map((volunteer) => {
+      const nearestTask = tasks.reduce((nearest, task) => {
+        const currentDistance = Math.hypot(task.lat - volunteer.lat, task.lng - volunteer.lng);
+        const nearestDistance = Math.hypot(nearest.lat - volunteer.lat, nearest.lng - volunteer.lng);
+        return currentDistance < nearestDistance ? task : nearest;
+      }, tasks[0]);
+
+      return {
+        id: `${volunteer.id}-${nearestTask.id}`,
+        path: [
+          { lat: volunteer.lat, lng: volunteer.lng },
+          { lat: nearestTask.lat, lng: nearestTask.lng },
+        ],
+      };
+    });
+  }, [showRoutes, tasks, volunteers]);
 
   const toggleMapType = () => {
-    const types: MapState["mapType"][] = ["roadmap", "satellite", "terrain"];
-    const currentIndex = types.indexOf(mapState.mapType);
-    setMapState((prev) => ({ ...prev, mapType: types[(currentIndex + 1) % types.length] }));
+    const types: MapType[] = ["roadmap", "satellite", "hybrid", "terrain"];
+    const index = types.indexOf(mapType);
+    setMapType(types[(index + 1) % types.length]);
   };
 
-  return (
-    <div className={cn("relative w-full overflow-hidden rounded-xl border border-border", height, mapTypeClass[mapState.mapType])}>
-      <div className="absolute inset-0">
-        <svg className="h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-          <defs>
-            <linearGradient id="river" x1="0" x2="1" y1="0" y2="1">
-              <stop offset="0%" stopColor={mapState.mapType === "satellite" ? "#436f83" : "#b9d9eb"} />
-              <stop offset="100%" stopColor={mapState.mapType === "satellite" ? "#254b5f" : "#d8ecf7"} />
-            </linearGradient>
-            <pattern id="mapGrid" width="8" height="8" patternUnits="userSpaceOnUse">
-              <path d="M 8 0 L 0 0 0 8" fill="none" stroke={mapState.mapType === "satellite" ? "rgba(255,255,255,.08)" : "rgba(52,72,92,.10)"} strokeWidth="0.25" />
-            </pattern>
-          </defs>
-
-          <rect width="100" height="100" fill="url(#mapGrid)" />
-          <path d="M0,18 C16,26 23,38 36,39 C51,40 56,25 70,28 C82,31 87,48 100,52 L100,68 C82,61 74,48 61,47 C45,45 42,59 27,55 C16,52 9,40 0,37 Z" fill="url(#river)" opacity="0.9" />
-          <path d="M4,78 C20,68 32,72 45,62 C60,51 70,48 96,42" fill="none" stroke={mapState.mapType === "satellite" ? "rgba(255,255,255,.36)" : "rgba(71,85,105,.42)"} strokeWidth="1.25" strokeLinecap="round" />
-          <path d="M10,20 C30,34 42,29 58,44 C70,55 82,60 96,70" fill="none" stroke={mapState.mapType === "satellite" ? "rgba(255,255,255,.30)" : "rgba(71,85,105,.34)"} strokeWidth="0.9" strokeLinecap="round" />
-          <path d="M18,8 L24,92 M44,5 L42,94 M72,10 L66,92" fill="none" stroke={mapState.mapType === "satellite" ? "rgba(255,255,255,.22)" : "rgba(100,116,139,.30)"} strokeWidth="0.55" strokeLinecap="round" />
-
-          {mapState.showRoutes &&
-            volunteers.slice(0, 6).map((volunteer) => {
-              const nearestTask = tasks.reduce((nearest, task) => {
-                const currentDistance = Math.hypot(task.coords.x - volunteer.coords.x, task.coords.y - volunteer.coords.y);
-                const nearestDistance = Math.hypot(nearest.coords.x - volunteer.coords.x, nearest.coords.y - volunteer.coords.y);
-                return currentDistance < nearestDistance ? task : nearest;
-              }, tasks[0]);
-
-              return (
-                <line
-                  key={volunteer.id}
-                  x1={volunteer.coords.x}
-                  y1={volunteer.coords.y}
-                  x2={nearestTask.coords.x}
-                  y2={nearestTask.coords.y}
-                  stroke="hsl(var(--primary))"
-                  strokeWidth="0.55"
-                  strokeDasharray="1.5 1.2"
-                  opacity="0.7"
-                />
-              );
-            })}
-        </svg>
+  if (!apiKey) {
+    return (
+      <div className={cn("flex w-full items-center justify-center rounded-xl border border-border bg-muted/40 p-6", height)}>
+        <div className="max-w-md text-center">
+          <AlertTriangle className="mx-auto mb-3 h-8 w-8 text-warning" />
+          <h3 className="text-sm font-semibold">Google Maps API key missing</h3>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Add `VITE_GOOGLE_MAPS_API_KEY=your_key_here` to `frontend/.env` and restart Vite to render the real map.
+          </p>
+        </div>
       </div>
+    );
+  }
 
-      {mapState.showHeatmap && (
-        <div className="absolute inset-0 pointer-events-none">
-          {tasks.map((task) => (
-            <div
-              key={`heat-${task.id}`}
-              className="absolute h-32 w-32 -translate-x-1/2 -translate-y-1/2 rounded-full blur-xl"
-              style={{
-                left: `${task.coords.x}%`,
-                top: `${task.coords.y}%`,
-                background: `radial-gradient(circle, ${priorityGlow[task.priority]} 0%, transparent 68%)`,
+  return (
+    <div className={cn("relative w-full overflow-hidden rounded-xl border border-border", height)}>
+      <LoadScript googleMapsApiKey={apiKey}>
+        <GoogleMap
+          mapContainerStyle={{ width: "100%", height: "100%" }}
+          center={center}
+          zoom={10}
+          mapTypeId={mapType}
+          options={mapOptions}
+        >
+          {showZone && (
+            <CircleF
+              center={HYDERABAD_CENTER}
+              radius={PRIMARY_ZONE_RADIUS_METERS}
+              options={{
+                strokeColor: "#ef4444",
+                strokeOpacity: 0.8,
+                strokeWeight: 2,
+                fillColor: "#ef4444",
+                fillOpacity: 0.08,
+              }}
+            />
+          )}
+
+          {routeLines.map((route) => (
+            <PolylineF
+              key={route.id}
+              path={route.path}
+              options={{
+                strokeColor: "#2563eb",
+                strokeOpacity: 0.65,
+                strokeWeight: 3,
               }}
             />
           ))}
-        </div>
-      )}
 
-      {districtLabels.map((label) => (
-        <div
-          key={label.name}
-          className={cn(
-            "absolute -translate-x-1/2 -translate-y-1/2 rounded bg-background/70 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider shadow-sm backdrop-blur",
-            mapState.mapType === "satellite" && "bg-black/35 text-white"
+          {showClusters ? (
+            <MarkerClustererF>
+              {(clusterer) => (
+                <>
+                  {tasks.map((task) => (
+                    <MarkerF
+                      key={task.id}
+                      position={{ lat: task.lat, lng: task.lng }}
+                      clusterer={clusterer}
+                      icon={{ url: priorityIcon[task.priority_level] || priorityIcon.LOW }}
+                      title={`${task.priority_level}: ${task.title}`}
+                      onClick={() => setSelectedTask(task)}
+                    />
+                  ))}
+                </>
+              )}
+            </MarkerClustererF>
+          ) : (
+            tasks.map((task) => (
+              <MarkerF
+                key={task.id}
+                position={{ lat: task.lat, lng: task.lng }}
+                icon={{ url: priorityIcon[task.priority_level] || priorityIcon.LOW }}
+                title={`${task.priority_level}: ${task.title}`}
+                onClick={() => setSelectedTask(task)}
+              />
+            ))
           )}
-          style={{ left: `${label.x}%`, top: `${label.y}%` }}
-        >
-          {label.name}
-        </div>
-      ))}
 
-      {volunteers.map((volunteer) => (
-        <div
-          key={volunteer.id}
-          className="absolute h-6 w-6 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-primary/90 text-[9px] font-bold text-primary-foreground shadow-md"
-          style={{ left: `${volunteer.coords.x}%`, top: `${volunteer.coords.y}%` }}
-          title={`${volunteer.name} - ${volunteer.availability}`}
-        >
-          <span className="flex h-full w-full items-center justify-center">{volunteer.initials}</span>
-        </div>
-      ))}
-
-      {mapState.showClusters
-        ? clusterGroups.map((cluster) => (
-            <button
-              key={cluster.id}
-              className={cn(
-                "absolute flex h-14 w-14 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-lg font-bold text-white shadow-xl ring-8 ring-white/40",
-                cluster.tone
-              )}
-              style={{ left: `${cluster.x}%`, top: `${cluster.y}%` }}
-              type="button"
-            >
-              {cluster.count}
-            </button>
-          ))
-        : tasks.map((task) => (
-            <button
-              key={task.id}
-              onClick={() => setSelectedTaskId(task.id)}
-              className={cn(
-                "absolute h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full shadow-lg ring-4 transition hover:scale-125",
-                priorityTone[task.priority],
-                selectedTaskId === task.id ? "ring-primary/40 scale-125" : "ring-white/70"
-              )}
-              style={{ left: `${task.coords.x}%`, top: `${task.coords.y}%` }}
-              title={`${task.id}: ${task.title}`}
-              type="button"
+          {volunteers.map((volunteer) => (
+            <MarkerF
+              key={`vol-${volunteer.id}`}
+              position={{ lat: volunteer.lat, lng: volunteer.lng }}
+              title={`${volunteer.name} (${volunteer.status})`}
+              icon={{ url: "http://maps.google.com/mapfiles/ms/icons/blue-dot.png" }}
             />
           ))}
 
-      {selectedTask && !mapState.showClusters && (
-        <div
-          className="absolute w-64 -translate-x-1/2 rounded-lg border border-border bg-card/95 p-3 text-xs shadow-lifted backdrop-blur"
-          style={{ left: `${Math.min(Math.max(selectedTask.coords.x, 18), 82)}%`, top: `${Math.max(selectedTask.coords.y - 18, 8)}%` }}
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-mono text-[10px] text-muted-foreground">{selectedTask.id}</span>
-            <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase text-white", priorityTone[selectedTask.priority])}>
-              {selectedTask.priority}
-            </span>
-          </div>
-          <div className="mt-1 font-semibold text-foreground">{selectedTask.title}</div>
-          <div className="mt-1 text-muted-foreground">{selectedTask.location}</div>
-          <div className="mt-2 flex items-center gap-3 text-[11px] text-muted-foreground">
-            <span>{selectedTask.matched} matched</span>
-            <span>ETA {selectedTask.eta}</span>
-          </div>
-        </div>
-      )}
+          {selectedTask && (
+            <InfoWindowF
+              position={{ lat: selectedTask.lat, lng: selectedTask.lng }}
+              onCloseClick={() => setSelectedTask(null)}
+            >
+              <div className="max-w-[240px] space-y-1 text-sm">
+                <div className="text-xs font-semibold uppercase" style={{ color: priorityColor[selectedTask.priority_level] || "#16a34a" }}>
+                  {selectedTask.priority_level} · {selectedTask.mode}
+                </div>
+                <div className="font-semibold">{selectedTask.title}</div>
+                <div className="text-xs text-slate-600">{selectedTask.incident_type}</div>
+                <div className="text-xs text-slate-600">
+                  {selectedTask.assignments.length} assigned
+                </div>
+                <div className="text-xs text-slate-700">{priorityReason(selectedTask)}</div>
+              </div>
+            </InfoWindowF>
+          )}
+        </GoogleMap>
+      </LoadScript>
 
       <div className="absolute right-4 top-4 z-40 flex gap-2">
-        <button
-          onClick={toggleMapType}
-          className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium shadow-md transition hover:bg-muted"
-          title="Toggle map type"
-          type="button"
-        >
+        <Button type="button" size="sm" variant="secondary" className="gap-2 shadow-md" onClick={toggleMapType}>
           <Layers className="h-4 w-4" />
-          {mapState.mapType}
-        </button>
+          {mapType}
+        </Button>
+        <Button type="button" size="sm" variant="secondary" className="gap-2 shadow-md" onClick={() => refreshLocation().catch(console.error)}>
+          <LocateFixed className="h-4 w-4" />
+          GPS
+        </Button>
       </div>
 
       <div className="absolute left-4 top-4 z-40 flex flex-col gap-2">
-        <button
-          onClick={() => setMapState((prev) => ({ ...prev, showHeatmap: !prev.showHeatmap }))}
-          className={cn(
-            "flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium shadow-md transition",
-            mapState.showHeatmap ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card hover:bg-muted"
-          )}
-          type="button"
-        >
+        <Button type="button" size="sm" variant={showZone ? "default" : "secondary"} className="justify-start gap-2 shadow-md" onClick={() => setShowZone((value) => !value)}>
           <Zap className="h-4 w-4" />
-          Heatmap
-        </button>
-
-        <button
-          onClick={() => setMapState((prev) => ({ ...prev, showClusters: !prev.showClusters }))}
-          className={cn(
-            "flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium shadow-md transition",
-            mapState.showClusters ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card hover:bg-muted"
-          )}
-          type="button"
-        >
+          Primary Zone
+        </Button>
+        <Button type="button" size="sm" variant={showClusters ? "default" : "secondary"} className="justify-start gap-2 shadow-md" onClick={() => setShowClusters((value) => !value)}>
           <Users className="h-4 w-4" />
           Clusters
-        </button>
-
-        <button
-          onClick={() => setMapState((prev) => ({ ...prev, showRoutes: !prev.showRoutes }))}
-          className={cn(
-            "flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium shadow-md transition",
-            mapState.showRoutes ? "border-success bg-success text-white" : "border-border bg-card hover:bg-muted"
-          )}
-          type="button"
-        >
+        </Button>
+        <Button type="button" size="sm" variant={showRoutes ? "default" : "secondary"} className="justify-start gap-2 shadow-md" onClick={() => setShowRoutes((value) => !value)}>
           <Navigation className="h-4 w-4" />
           Routes
-        </button>
+        </Button>
       </div>
 
       <div className="absolute bottom-4 left-4 z-40 rounded-lg border border-border bg-card/95 p-3 text-xs shadow-md backdrop-blur">
         <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-foreground">Priority</div>
-        {(["critical", "high", "medium", "low"] as Priority[]).map((priority) => (
+        {Object.entries(priorityColor).map(([priority, color]) => (
           <div key={priority} className="flex items-center gap-2 py-1">
-            <span className={cn("h-4 w-4 rounded-full shadow-sm", priorityTone[priority])} />
-            <span className="capitalize">{priority}</span>
+            <span className="h-4 w-4 rounded-full shadow-sm" style={{ backgroundColor: color }} />
+            <span className="capitalize">{priority.toLowerCase()}</span>
           </div>
         ))}
+        <div className="mt-2 flex items-center gap-2 border-t border-border pt-2">
+          <span className="h-4 w-4 rounded-full bg-blue-600 shadow-sm" />
+          <span>Volunteer</span>
+        </div>
       </div>
     </div>
   );

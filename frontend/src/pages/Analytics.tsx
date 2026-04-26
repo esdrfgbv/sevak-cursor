@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { AppShell } from "@/components/layout/AppShell";
-import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from "recharts";
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from "recharts";
 import { Sparkles, TrendingUp, Clock, Award, Loader2 } from "lucide-react";
 import { analyticsApi, type DashboardAnalytics, type SkillDemand, type VolunteerPerformance } from "@/lib/api";
 
@@ -67,6 +67,18 @@ const Analytics = () => {
   return (
     <AppShell title="Analytics" subtitle={`${dashboard.total_tasks} tasks · ${dashboard.total_volunteers} volunteers`}>
       <div className="p-6 space-y-5">
+        <div className="bg-primary/10 border border-primary/30 rounded-xl p-5 shadow-elegant">
+          <div className="flex items-start gap-3">
+            <div className="h-9 w-9 rounded-md bg-primary/15 flex items-center justify-center">
+              <Sparkles className="h-4 w-4 text-primary" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold">AI Operations Insight</h3>
+              <p className="text-sm text-foreground leading-relaxed mt-1">{dashboard.ai_insight}</p>
+            </div>
+          </div>
+        </div>
+
         {/* KPI Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {[
@@ -189,14 +201,15 @@ const Analytics = () => {
           </div>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={skillData.slice(0, 10)} margin={{ top: 5, right: 5, left: -20, bottom: 0 }} barCategoryGap={18}>
+              <LineChart data={skillData.slice(0, 10)} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                 <XAxis dataKey="skill" stroke="hsl(var(--muted-foreground))" fontSize={10} tickLine={false} axisLine={false} />
                 <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
                 <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "hsl(var(--muted) / 0.4)" }} />
-                <Bar dataKey="demand" fill="hsl(var(--danger))" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="supply" fill="hsl(var(--success))" radius={[4, 4, 0, 0]} />
-              </BarChart>
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Line type="monotone" dataKey="demand" stroke="hsl(var(--danger))" strokeWidth={3} dot={{ r: 3 }} name="Demand" />
+                <Line type="monotone" dataKey="supply" stroke="hsl(var(--success))" strokeWidth={3} dot={{ r: 3 }} name="Supply" />
+              </LineChart>
             </ResponsiveContainer>
           </div>
         </div>

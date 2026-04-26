@@ -10,12 +10,14 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Loader2, Upload, MapPin, Phone, User, AlertTriangle, CheckCircle2,
-  Camera, X, ShieldAlert, Heart, LogOut, Clock
+  Camera, X, ShieldAlert, Heart, LogOut, Clock, LocateFixed, Sparkles
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { tasksApi, type Task, type TaskCreateResponse, type MatchResult } from '@/lib/api';
+import { getBrowserLocation } from '@/services/location';
+import { assignmentLabel, matchTags, priorityReason, resultLabel } from '@/lib/decision-labels';
 
 const skillOptions = [
   'Medical', 'Search and Rescue', 'Swift Water Rescue', 'Logistics',
@@ -35,9 +37,12 @@ export default function RequesterDashboard() {
   const [description, setDescription] = useState('');
   const [incidentType, setIncidentType] = useState('');
   const [peopleCount, setPeopleCount] = useState(1);
+  const [taskLat, setTaskLat] = useState(user?.lat ?? 17.3850);
+  const [taskLng, setTaskLng] = useState(user?.lng ?? 78.4867);
   const [requiredSkills, setRequiredSkills] = useState<string[]>([]);
   const [image, setImage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isFetchingLocation, setIsFetchingLocation] = useState(false);
   const [lastResult, setLastResult] = useState<TaskCreateResponse | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -59,6 +64,11 @@ export default function RequesterDashboard() {
     return () => clearInterval(interval);
   }, [user?.id]);
 
+  useEffect(() => {
+    setTaskLat(user?.lat ?? 17.3850);
+    setTaskLng(user?.lng ?? 78.4867);
+  }, [user?.lat, user?.lng]);
+
   const toggleSkill = (skill: string) => {
     setRequiredSkills(prev =>
       prev.includes(skill) ? prev.filter(s => s !== skill) : [...prev, skill]
@@ -79,6 +89,20 @@ export default function RequesterDashboard() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  const fetchCurrentLocation = async () => {
+    setIsFetchingLocation(true);
+    try {
+      const location = await getBrowserLocation();
+      setTaskLat(Number(location.lat.toFixed(6)));
+      setTaskLng(Number(location.lng.toFixed(6)));
+      toast.success('Current location added');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Unable to fetch current location');
+    } finally {
+      setIsFetchingLocation(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title || !description || !incidentType) {
@@ -87,6 +111,10 @@ export default function RequesterDashboard() {
     }
     if (mode === 'DISASTER' && !image) {
       toast.error('DISASTER mode requires an image for verification');
+      return;
+    }
+    if (!Number.isFinite(taskLat) || !Number.isFinite(taskLng)) {
+      toast.error('Please enter valid latitude and longitude');
       return;
     }
 
@@ -99,8 +127,8 @@ export default function RequesterDashboard() {
         description,
         required_skills: requiredSkills,
         people_count: peopleCount,
-        lat: user?.lat || 12.9716,
-        lng: user?.lng || 77.5946,
+        lat: taskLat,
+        lng: taskLng,
         mode,
         image_data: image,
       });
@@ -253,6 +281,49 @@ export default function RequesterDashboard() {
                     <Label>People Affected</Label>
                     <Input type="number" min={1} max={1000} value={peopleCount} onChange={e => setPeopleCount(parseInt(e.target.value) || 1)} />
                   </div>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <Label className="flex items-center gap-1.5">
+                        <MapPin className="h-3.5 w-3.5" /> Location Details
+                      </Label>
+                      <Button type="button" variant="outline" size="sm" onClick={fetchCurrentLocation} disabled={isFetchingLocation}>
+                        {isFetchingLocation ? (
+                          <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                        ) : (
+                          <LocateFixed className="h-4 w-4 mr-1.5" />
+                        )}
+                        Current Location
+                      </Button>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <Label>Latitude *</Label>
+                        <Input
+                          type="number"
+                          step="any"
+                          min={-90}
+                          max={90}
+                          placeholder="e.g., 17.3850"
+                          value={Number.isFinite(taskLat) ? taskLat : ''}
+                          onChange={e => setTaskLat(e.target.value === '' ? NaN : Number(e.target.value))}
+                          required
+                        />
+                      </div>
+                      <div>
+                        <Label>Longitude *</Label>
+                        <Input
+                          type="number"
+                          step="any"
+                          min={-180}
+                          max={180}
+                          placeholder="e.g., 78.4867"
+                          value={Number.isFinite(taskLng) ? taskLng : ''}
+                          onChange={e => setTaskLng(e.target.value === '' ? NaN : Number(e.target.value))}
+                          required
+                        />
+                      </div>
+                    </div>
+                  </div>
                   <div>
                     <Label>Required Skills</Label>
                     <div className="flex flex-wrap gap-1.5 mt-2">
@@ -297,7 +368,7 @@ export default function RequesterDashboard() {
                       <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
                         <span>{task.incident_type}</span>
                         <span>{task.assignments.length} assigned</span>
-                        <span>Score: {task.priority_score}</span>
+                        <span>{priorityReason(task)}</span>
                       </div>
                       {task.assignments.length > 0 && (
                         <div className="mt-2 space-y-1">
@@ -305,7 +376,7 @@ export default function RequesterDashboard() {
                             <div key={a.id} className="flex items-center gap-2 text-xs">
                               <span className="font-medium">{a.volunteer?.name || `Vol #${a.volunteer_id}`}</span>
                               <Badge variant="outline" className="text-[10px]">{a.status}</Badge>
-                              <span className="text-muted-foreground">Score: {(a.score * 100).toFixed(0)}%</span>
+                              <span className="text-muted-foreground truncate">{a.reason}</span>
                             </div>
                           ))}
                         </div>
@@ -343,9 +414,21 @@ export default function RequesterDashboard() {
                     <p className="text-sm text-muted-foreground">{lastResult.request.description}</p>
                     <div className="grid grid-cols-3 gap-4 text-sm">
                       <div><span className="text-muted-foreground">Assigned:</span> <strong>{lastResult.assigned_count}</strong></div>
-                      <div><span className="text-muted-foreground">Priority:</span> <strong>{lastResult.request.priority_score}</strong></div>
+                      <div><span className="text-muted-foreground">Priority:</span> <strong>{lastResult.request.priority_level}</strong></div>
                       <div><span className="text-muted-foreground">Duplicate:</span> <strong>{lastResult.duplicate_detected ? 'Yes' : 'No'}</strong></div>
                     </div>
+                    <Alert className="border-amber-500/30 bg-amber-500/5">
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertTitle>Priority Reason</AlertTitle>
+                      <AlertDescription>{priorityReason(lastResult.request)}</AlertDescription>
+                    </Alert>
+                    {lastResult.request.ai_insight && (
+                      <Alert className="border-primary/40 bg-primary/10 shadow-sm">
+                        <Sparkles className="h-4 w-4" />
+                        <AlertTitle>AI Decision Insight</AlertTitle>
+                        <AlertDescription>{lastResult.request.ai_insight}</AlertDescription>
+                      </Alert>
+                    )}
                   </CardContent>
                 </Card>
 
@@ -375,15 +458,18 @@ export default function RequesterDashboard() {
                       {lastResult.match_results.top_volunteers.map((m, i) => (
                         <div key={m.volunteer.id} className={cn("p-3 rounded-lg border", i === 0 ? "border-primary/30 bg-primary/5" : "border-border")}>
                           <div className="flex items-center justify-between">
-                            <div>
-                              <span className="font-medium">{m.volunteer.name}</span>
-                              {i === 0 && <Badge className="ml-2 text-[10px]">Top Match</Badge>}
-                            </div>
-                            <span className="text-sm font-semibold">{(m.score * 100).toFixed(0)}%</span>
+                          <div>
+                            <span className="font-medium">{m.volunteer.name}</span>
+                            {i === 0 && <Badge className="ml-2 text-[10px]">Top Match</Badge>}
+                          </div>
+                            <Badge variant="secondary" className="text-[10px]">{resultLabel(m)}</Badge>
                           </div>
                           <p className="text-xs text-muted-foreground mt-1">{m.justification}</p>
                           <div className="flex gap-1 mt-2">
-                            {m.volunteer.skills.map(s => (
+                            {matchTags(m.score, m.justification).map(tag => (
+                              <Badge key={tag} variant="secondary" className="text-[10px]">{tag}</Badge>
+                            ))}
+                            {m.volunteer.skills.slice(0, 4).map(s => (
                               <Badge key={s.id} variant="outline" className="text-[10px]">{s.name}</Badge>
                             ))}
                           </div>
@@ -405,7 +491,7 @@ export default function RequesterDashboard() {
                             <p className="text-xs text-muted-foreground">{a.reason}</p>
                           </div>
                           <div className="text-right">
-                            <div className="font-semibold">{(a.score * 100).toFixed(0)}%</div>
+                            <Badge variant="secondary" className="text-[10px]">{assignmentLabel(a)}</Badge>
                             <Badge variant="outline" className="text-[10px]">{a.status}</Badge>
                           </div>
                         </div>

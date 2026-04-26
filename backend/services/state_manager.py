@@ -1,17 +1,11 @@
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+"""State manager — works with dataclass models (no DB session needed)."""
+from __future__ import annotations
 
-from ..models import Assignment, Request, User
-
-REQUEST_TRANSITIONS = {
-    "pending": {"assigned", "completed"},
-    "assigned": {"completed"},
-    "completed": set(),
-}
+from .. import firebase_service
 
 VOLUNTEER_TRANSITIONS = {
     "available": {"assigned"},
-    "assigned": {"available", "en_route"},
+    "assigned": {"available", "en_route", "completed"},
     "en_route": {"on_task", "available", "assigned"},
     "on_task": {"completed", "available", "assigned"},
     "completed": {"available", "assigned"},
@@ -28,41 +22,34 @@ ASSIGNMENT_TO_VOLUNTEER = {
 }
 
 
-def update_request_status(db: Session, request_obj: Request) -> Request:
-    if request_obj.status == "completed":
-        db.add(request_obj)
-        return request_obj
+def update_request_status(request_id: int) -> str:
+    """Recompute and persist request status from assignments."""
+    return firebase_service.sync_request_status(request_id)
 
-    active_assignments = db.scalars(
-        select(Assignment).where(
-            Assignment.request_id == request_obj.id,
-            Assignment.status.in_(["pending_acceptance", "accepted", "en_route", "on_task"]),
-        )
-    ).all()
-    completed_assignments = db.scalars(
-        select(Assignment).where(Assignment.request_id == request_obj.id, Assignment.status == "completed")
-    ).all()
 
-    if completed_assignments and not active_assignments:
-        request_obj.status = "completed"
-    elif active_assignments:
-        request_obj.status = "assigned"
+def update_volunteer_status(volunteer, new_status: str, availability: bool | None = None):
+    """Validate transition and persist to Firebase.
+    volunteer can be a dataclass User or a dict.
+    """
+    if isinstance(volunteer, dict):
+        current = volunteer.get("status", "available")
+        vol_id = volunteer.get("id")
     else:
-        request_obj.status = "pending"
-    db.add(request_obj)
-    return request_obj
+        current = volunteer.status
+        vol_id = volunteer.id
 
-
-def update_volunteer_status(volunteer: User, new_status: str, availability: bool | None = None) -> User:
-    current = volunteer.status
     if new_status != current and new_status not in VOLUNTEER_TRANSITIONS.get(current, set()):
         if not (current == "assigned" and new_status == "completed"):
             raise ValueError(f"Invalid volunteer state transition: {current} -> {new_status}")
-    volunteer.status = new_status
-    if availability is not None:
+
+    if availability is None:
+        availability = new_status in {"available", "completed"}
+
+    firebase_service.update_user(vol_id, {"status": new_status, "availability": availability})
+
+    # Also update the in-memory object if it's a dataclass
+    if not isinstance(volunteer, dict):
+        volunteer.status = new_status
         volunteer.availability = availability
-    elif new_status in {"available", "completed"}:
-        volunteer.availability = True
-    else:
-        volunteer.availability = False
+
     return volunteer

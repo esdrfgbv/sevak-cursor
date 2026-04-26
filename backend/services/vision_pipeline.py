@@ -93,7 +93,7 @@ def analyze_incident_image(
     gemini_reason = str(gemini.get("reason") or "")
 
     if not is_disaster:
-        msg = "Gemini assessment: image does not appear to show an active disaster or emergency."
+        msg = "AI verification: image does not appear to show an active disaster or emergency."
         warnings.append("Image does not appear to show disaster evidence")
         summary = {
             "is_disaster": False,
