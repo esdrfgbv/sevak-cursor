@@ -1,54 +1,71 @@
-# Universal ignore (frontend + backend)
-
-## Dependencies
+# Dependencies
 node_modules/
+vendor/
 
-## Build outputs
-dist/
-dist-ssr/
-build/
-out/
-coverage/
-.nyc_output/
-*.tsbuildinfo
+# Backend
+backend/__pycache__/
+backend/*.py[cod]
+backend/*$py.class
+backend/*.so
+backend/.Python
+backend/venv/
+backend/ENV/
+backend/.env
+backend/*.egg-info/
+backend/dist/
+backend/build/
 
-## Env files (keep examples)
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+# Environment and secrets
+*.pem
+*-firebase-adminsdk-*.json
+serviceAccount*.json
+firebase-credentials.json
 .env
-.env.*
-!.env.example
-!.env.template
+.env.local
+.env.*.local
 
-## Logs
-logs/
+# Logs / local DB artifacts
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
+*.db
+*.sqlite3
 
-## Vite / React tooling
-*.local
-.vite/
-
-## TypeScript / ESLint caches
-.eslintcache
-
-## OS / Editor
-.DS_Store
-Thumbs.db
+# IDE
 .idea/
 .vscode/
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+*.swp
+*~
+.DS_Store
+Thumbs.db
 
-## Docker / compose local state
-**/data/
-**/.docker/
+# Testing
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage/
+*.cover
 
-## Backend specific
-backend/.drizzle/
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
 
+# Firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log
+
+# Render
+.render/
+
+# Temporary files
+tmp/
+temp/
+*.tmp

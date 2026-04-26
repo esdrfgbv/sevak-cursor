@@ -1,0 +1,79 @@
+# SEVAK Quick Deployment Scripts
+# Run these commands step by step
+
+# ============================================
+# BACKEND DEPLOYMENT TO RENDER
+# ============================================
+
+# Step 1: Ensure your code is on GitHub
+git add .
+git commit -m "Prepare for deployment"
+git push origin main
+
+# Step 2: Go to render.com and create web service
+# - Connect your GitHub repo
+# - Root Directory: backend
+# - Build: pip install -r requirements.txt
+# - Start: uvicorn main:app --host 0.0.0.0 --port $PORT
+
+# Step 3: Add environment variables in Render:
+# FIREBASE_PROJECT_ID=sevak-disasteriq
+# FIREBASE_CREDENTIALS_PATH=./firebase-credentials.json
+# GEMINI_API_KEY=your-key-here
+# GEMINI_VISION_MODEL=gemini-1.5-flash
+# BASE_LAT=17.3850
+# BASE_LNG=78.4867
+# DEMO_RADIUS_KM=20
+# MAX_ASSIGNMENT_DISTANCE_KM=50
+
+# Step 4: Upload firebase-credentials.json as secret file
+
+# Step 5: Deploy and copy your backend URL
+
+
+# ============================================
+# FRONTEND DEPLOYMENT TO FIREBASE
+# ============================================
+
+# Step 1: Install Firebase CLI (one time only)
+# npm install -g firebase-tools
+
+# Step 2: Login to Firebase
+# firebase login
+
+# Step 3: Update production API URL
+cd frontend
+echo "VITE_API_URL=https://your-backend.onrender.com" > .env.production
+
+# Step 4: Build frontend
+npm install
+npm run build
+
+# Step 5: Deploy to Firebase
+# firebase deploy --only hosting
+
+# Your site is live at: https://your-project.web.app
+
+
+# ============================================
+# VERIFY DEPLOYMENT
+# ============================================
+
+# Test backend
+# curl https://your-backend.onrender.com/
+
+# Test frontend
+# Open https://your-project.web.app in browser
+
+
+# ============================================
+# UPDATE DEPLOYMENTS
+# ============================================
+
+# Update backend:
+# git push origin main  # Render auto-deploys
+
+# Update frontend:
+# cd frontend
+# npm run build
+# firebase deploy --only hosting

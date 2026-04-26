@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
-from .services.priority_engine import explain_priority
+from ..services.priority_engine import explain_priority
 
 
 @dataclass
@@ -207,4 +207,96 @@ def rating_from_dict(d: dict) -> Rating:
         rating=int(d.get("rating", 0)),
         comment=d.get("comment"),
         created_at=d.get("created_at", datetime.utcnow()),
+    )
+
+
+# ── Firestore Conversion Helpers ─────────────────────────────────────────────
+
+def user_to_firestore(user: User) -> dict:
+    """Convert User model to Firestore dict."""
+    return {
+        'name': user.name,
+        'role': user.role,
+        'lat': user.lat,
+        'lng': user.lng,
+        'availability': user.availability,
+        'status': user.status,
+        'phone': user.phone,
+        'rating': user.rating,
+        'workload': user.workload,
+        'skills': [s.name if isinstance(s, Skill) else s for s in user.skills],
+        'created_at': user.created_at.isoformat() if user.created_at else None
+    }
+
+
+def user_from_firestore(user_dict: dict) -> User:
+    """Convert Firestore dict to User model."""
+    skills = [Skill(id=0, name=s) if isinstance(s, str) else skill_from_dict(s)
+              for s in (user_dict.get("skills") or [])]
+    return User(
+        id=user_dict.get("id", 0),
+        name=user_dict.get("name", ""),
+        role=user_dict.get("role", "volunteer"),
+        lat=float(user_dict.get("lat", 0)),
+        lng=float(user_dict.get("lng", 0)),
+        availability=bool(user_dict.get("availability", True)),
+        status=user_dict.get("status", "available"),
+        phone=user_dict.get("phone"),
+        rating=float(user_dict.get("rating", 0.0)),
+        workload=int(user_dict.get("workload", 0)),
+        skills=skills,
+        created_at=user_dict.get("created_at", datetime.utcnow()),
+    )
+
+
+def request_to_firestore(request: Request) -> dict:
+    """Convert Request model to Firestore dict."""
+    return {
+        'requester_id': request.requester_id,
+        'incident_type': request.incident_type,
+        'title': request.title,
+        'description': request.description,
+        'mode': request.mode,
+        'lat': request.lat,
+        'lng': request.lng,
+        'people_count': request.people_count,
+        'status': request.status,
+        'priority_score': request.priority_score,
+        'priority_level': request.priority_level,
+        'cluster_boost': request.cluster_boost,
+        'severity_support_points': request.severity_support_points,
+        'image_url': request.image_url,
+        'image_verification_status': request.image_verification_status,
+        'image_verification_reason': request.image_verification_reason,
+        'ai_insight': request.ai_insight,
+        'required_skills': [s.name if isinstance(s, Skill) else s for s in request.skills],
+        'created_at': request.created_at.isoformat() if request.created_at else None
+    }
+
+
+def request_from_firestore(request_dict: dict) -> Request:
+    """Convert Firestore dict to Request model."""
+    skills = [Skill(id=0, name=s) if isinstance(s, str) else skill_from_dict(s)
+              for s in (request_dict.get("required_skills") or request_dict.get("skills") or [])]
+    return Request(
+        id=request_dict.get("id", 0),
+        requester_id=request_dict.get("requester_id"),
+        incident_type=request_dict.get("incident_type", ""),
+        title=request_dict.get("title", ""),
+        description=request_dict.get("description", ""),
+        mode=request_dict.get("mode", "DISASTER"),
+        lat=float(request_dict.get("lat", 0)),
+        lng=float(request_dict.get("lng", 0)),
+        people_count=int(request_dict.get("people_count", 0)),
+        status=request_dict.get("status", "pending"),
+        priority_score=int(request_dict.get("priority_score", 0)),
+        priority_level=request_dict.get("priority_level", "LOW"),
+        cluster_boost=int(request_dict.get("cluster_boost", 0)),
+        severity_support_points=int(request_dict.get("severity_support_points", 0)),
+        image_url=request_dict.get("image_url"),
+        image_verification_status=request_dict.get("image_verification_status", "not_submitted"),
+        image_verification_reason=request_dict.get("image_verification_reason"),
+        ai_insight=request_dict.get("ai_insight"),
+        created_at=request_dict.get("created_at", datetime.utcnow()),
+        skills=skills,
     )
