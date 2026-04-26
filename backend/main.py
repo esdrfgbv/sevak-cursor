@@ -3,10 +3,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import config, schemas
-from .routers import analytics, assignments, assignments_api, requests, tasks, users, volunteers
-from .routers.auth import router as auth_router
-from .firebase_service import seed_if_empty
+import config
+import schemas
+
+from routers import analytics, assignments, assignments_api, requests, tasks, users, volunteers
+from routers.auth import router as auth_router
+
+from firebase_service import seed_if_empty
 
 
 @asynccontextmanager
